@@ -352,7 +352,7 @@ async function loadPlans() {
         </li>`).join('')}
       </ul>
       <div style="display:flex;gap:8px;">
-        <button class="btn btn-secondary btn-sm" style="flex:1" onclick='editPlan(${JSON.stringify(p)})'>Modifier</button>
+        <button class="btn btn-secondary btn-sm" style="flex:1" onclick="editPlanById('${p.id}')">Modifier</button>
         <button class="btn btn-danger btn-sm" onclick="togglePlan('${p.id}', ${!p.active})">${p.active ? 'Désactiver' : 'Activer'}</button>
       </div>
     </div>`;
@@ -373,6 +373,12 @@ function openPlanModal() {
   document.getElementById('plan-features-list').innerHTML = '';
   document.getElementById('plan-modal-title').textContent = 'Nouveau forfait';
   openModal('modal-plan');
+}
+
+function editPlanById(id) {
+  const p = plansCache.find(x => x.id === id);
+  if (!p) { toast('Forfait introuvable', 'error'); return; }
+  editPlan(p);
 }
 
 function editPlan(p) {
@@ -524,7 +530,7 @@ async function loadClients() {
       <td>${c.contact_email || '—'}</td>
       <td style="color:var(--text3)">${new Date(c.created_at).toLocaleDateString('fr-CA')}</td>
       <td><div class="td-actions">
-        <button class="btn btn-secondary btn-sm" onclick='editClient(${JSON.stringify(c)})'>Modifier</button>
+        <button class="btn btn-secondary btn-sm" onclick="editClientById('${c.id}')">Modifier</button>
       </div></td>
     </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucun client</td></tr>';
 }
@@ -536,6 +542,12 @@ function openClientModal(c) {
   document.getElementById('c-city').value = 'Montréal';
   document.getElementById('client-modal-title').textContent = 'Nouveau client';
   openModal('modal-client');
+}
+
+function editClientById(id) {
+  const c = clientsCache.find(x => x.id === id);
+  if (!c) { toast('Client introuvable', 'error'); return; }
+  editClient(c);
 }
 
 function editClient(c) {
@@ -591,7 +603,7 @@ async function loadLicences() {
       <td><span class="badge ${l.active && !expired ? 'badge-green' : 'badge-red'}">${l.active && !expired ? 'Active' : expired ? 'Expirée' : 'Inactive'}</span></td>
       <td style="color:var(--text3)">${l.expires_at ? new Date(l.expires_at).toLocaleDateString('fr-CA') : '∞'}</td>
       <td><div class="td-actions">
-        <button class="btn btn-secondary btn-sm" onclick='editLicence(${JSON.stringify(l)})'>Modifier</button>
+        <button class="btn btn-secondary btn-sm" onclick="editLicenceById('${l.id}')">Modifier</button>
         <button class="btn btn-danger btn-sm" onclick="toggleLicence('${l.id}', ${!l.active})">${l.active ? 'Désactiver' : 'Activer'}</button>
       </div></td>
     </tr>`;
@@ -609,6 +621,12 @@ async function openLicenceModal() {
   document.getElementById('lic-active').checked = true;
   document.getElementById('lic-modal-title').textContent = 'Nouvelle licence';
   openModal('modal-licence');
+}
+
+async function editLicenceById(id) {
+  const l = licencesCache.find(x => x.id === id);
+  if (!l) { toast('Licence introuvable', 'error'); return; }
+  await editLicence(l);
 }
 
 async function editLicence(l) {
