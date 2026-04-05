@@ -230,6 +230,55 @@
   </div>
 </div>
 
+<!-- Modal Ajouter Membre -->
+<div class="modal-overlay" id="modal-add-member">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header"><span class="modal-title">Ajouter un membre</span><button onclick="closeModal('modal-add-member')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="member-network-id">
+      <div class="form-group"><label>Bâtiment</label><select id="member-client-select"></select></div>
+      <div class="form-group"><label>URL Supabase du bâtiment</label><input id="member-url" placeholder="https://xxx.supabase.co"></div>
+      <div class="form-group"><label>Clé anon du bâtiment</label><input id="member-key" placeholder="eyJ..."></div>
+      <div class="form-group"><label>Priorité (1 = résidents locaux prioritaires)</label><input id="member-priority" type="number" value="1" min="1"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-add-member')">Annuler</button>
+      <button class="btn btn-primary" onclick="saveMember()">Ajouter</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Ajouter Solde -->
+<div class="modal-overlay" id="modal-add-balance">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header"><span class="modal-title">Crédit réseau</span><button onclick="closeModal('modal-add-balance')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="bal-client-id">
+      <input type="hidden" id="bal-network-id">
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px;">Définir le solde réseau de <strong id="bal-client-name"></strong></div>
+      <div class="form-group"><label>Solde ($)</label><input id="bal-amount" type="number" step="0.01" placeholder="200.00"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-add-balance')">Annuler</button>
+      <button class="btn btn-primary" onclick="saveBalance()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Réconciliation -->
+<div class="modal-overlay" id="modal-recon">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-header">
+      <span class="modal-title">📊 Réconciliation — <span id="recon-network-name"></span></span>
+      <button onclick="closeModal('modal-recon')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body" id="recon-content" style="overflow-x:auto"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-recon')">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal Client -->
 <div class="modal-overlay" id="modal-client">
   <div class="modal">
@@ -687,29 +736,161 @@ async function toggleLicence(id, active) {
 }
 
 // RÉSEAUX
+let networksCache = [];
+let networkBalancesCache = [];
+
 async function loadNetworks() {
-  const { data: networks } = await sb.from('networks').select('*, network_members(*, clients(name))').order('name');
+  const [{ data: networks }, { data: balances }, { data: clients }] = await Promise.all([
+    sb.from('networks').select('*, network_members(*, clients(name))').order('name'),
+    sb.from('network_balances').select('*, clients(name), networks(name)'),
+    sb.from('clients').select('id, name').order('name')
+  ]);
+  networksCache = networks || [];
+  networkBalancesCache = balances || [];
+  if (!clientsCache.length) clientsCache = clients || [];
+
   const el = document.getElementById('networks-content');
-  if (!networks?.length) {
-    el.innerHTML = '<div class="card" style="text-align:center;color:var(--text3)">Aucun réseau de partage configuré</div>';
+  if (!networksCache.length) {
+    el.innerHTML = '<div class="card" style="text-align:center;color:var(--text3)">Aucun réseau configuré</div>';
     return;
   }
-  el.innerHTML = networks.map(n => `
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-        <div>
-          <div style="font-weight:600">${n.name}</div>
-          <div style="font-size:12px;color:var(--text3);margin-top:2px">${n.description || ''}</div>
-        </div>
-        <span class="badge ${n.active ? 'badge-green' : 'badge-gray'}">${n.active ? 'Actif' : 'Inactif'}</span>
-      </div>
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px">Membres</div>
-      ${(n.network_members || []).map(m => `
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
-          <span style="font-size:13px">${m.clients?.name || '—'}</span>
-          <span class="badge badge-gray">Priorité ${m.priority}</span>
-        </div>`).join('') || '<div style="color:var(--text3);font-size:12px">Aucun membre</div>'}
-    </div>`).join('');
+
+  el.innerHTML = '';
+  el.addEventListener('click', function handler(e) {
+    const balBtn = e.target.closest('.net-bal-btn');
+    if (balBtn) { openAddBalanceModal(balBtn.dataset.client, balBtn.dataset.network, balBtn.dataset.name); return; }
+    const remBtn = e.target.closest('.net-rem-btn');
+    if (remBtn) { removeMember(remBtn.dataset.member); return; }
+    const addBtn = e.target.closest('.net-add-member');
+    if (addBtn) { openAddMemberModal(addBtn.dataset.nid); return; }
+    const reconBtn = e.target.closest('.net-recon');
+    if (reconBtn) { openReconModal(reconBtn.dataset.nid, reconBtn.dataset.nname); return; }
+  });
+  el.innerHTML = networksCache.map(n => {
+    const members = n.network_members || [];
+    const memberRows = members.map(m => {
+      const bal = networkBalancesCache.find(b => b.client_id === m.client_id && b.network_id === n.id);
+      const balAmt = (bal?.balance || 0).toFixed(2);
+      const mname = (m.clients?.name || '—');
+      return [
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">',
+        '<div>',
+        '<div style="font-size:13px;font-weight:500">' + mname + '</div>',
+        '<div style="font-size:11px;color:var(--text3)">Priorité ' + m.priority + '</div>',
+        '</div>',
+        '<div style="display:flex;align-items:center;gap:10px;">',
+        '<div style="text-align:right;">',
+        '<div style="font-size:13px;color:var(--accent)">' + balAmt + ' $</div>',
+        '<div style="font-size:11px;color:var(--text3)">Solde réseau</div>',
+        '</div>',
+        '<button class="btn btn-secondary btn-sm net-bal-btn" data-client="' + m.client_id + '" data-network="' + n.id + '" data-name="' + mname.replace(/"/g, '') + '">+ Crédit</button>',
+        '<button class="btn btn-danger btn-sm net-rem-btn" data-member="' + m.id + '">Retirer</button>',
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">Aucun membre — ajoutez des bâtiments</div>';
+
+    return '<div class="card" style="margin-bottom:16px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+      + '<div><div style="font-weight:600;font-size:15px">' + n.name + '</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-top:2px">' + (n.description || '') + '</div></div>'
+      + '<div style="display:flex;gap:8px;align-items:center;">'
+      + '<span class="badge ' + (n.active ? 'badge-green' : 'badge-gray') + '">' + (n.active ? 'Actif' : 'Inactif') + '</span>'
+      + '<button class="btn btn-secondary btn-sm net-add-member" data-nid="' + n.id + '">+ Membre</button>'
+      + '<button class="btn btn-secondary btn-sm net-recon" data-nid="' + n.id + '" data-nname="' + n.name.replace(/"/g,'') + '">📊 Réconciliation</button>'
+      + '</div></div>'
+      + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px">Membres &amp; soldes réseau</div>'
+      + memberRows
+      + '</div>';
+  }).join('');
+}
+
+async function openAddMemberModal(networkId) {
+  document.getElementById('member-network-id').value = networkId;
+  const sel = document.getElementById('member-client-select');
+  sel.innerHTML = clientsCache.map(c => '<option value="' + c.id + '">' + c.name + '</option>').join('');
+  document.getElementById('member-priority').value = '1';
+  document.getElementById('member-url').value = '';
+  document.getElementById('member-key').value = '';
+  openModal('modal-add-member');
+}
+
+async function saveMember() {
+  const networkId  = document.getElementById('member-network-id').value;
+  const clientId   = document.getElementById('member-client-select').value;
+  const priority   = parseInt(document.getElementById('member-priority').value) || 1;
+  const url        = document.getElementById('member-url').value.trim();
+  const key        = document.getElementById('member-key').value.trim();
+  if (!url || !key) { toast('URL et clé anon requis', 'error'); return; }
+  const { error } = await sb.from('network_members').insert({
+    network_id: networkId, client_id: clientId,
+    supabase_url: url, anon_key: key, priority
+  });
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  // Créer solde réseau initial à 0
+  await sb.from('network_balances').upsert({ client_id: clientId, network_id: networkId, balance: 0 });
+  toast('Membre ajouté', 'success');
+  closeModal('modal-add-member');
+  loadNetworks();
+}
+
+async function removeMember(memberId) {
+  if (!confirm('Retirer ce membre du réseau ?')) return;
+  const { error } = await sb.from('network_members').delete().eq('id', memberId);
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast('Membre retiré', 'success');
+  loadNetworks();
+}
+
+async function openAddBalanceModal(clientId, networkId, clientName) {
+  document.getElementById('bal-client-id').value   = clientId;
+  document.getElementById('bal-network-id').value  = networkId;
+  document.getElementById('bal-client-name').textContent = clientName;
+  document.getElementById('bal-amount').value = '';
+  openModal('modal-add-balance');
+}
+
+async function saveBalance() {
+  const clientId  = document.getElementById('bal-client-id').value;
+  const networkId = document.getElementById('bal-network-id').value;
+  const amount    = parseFloat(document.getElementById('bal-amount').value) || 0;
+  if (amount <= 0) { toast('Montant invalide', 'error'); return; }
+  const { error } = await sb.from('network_balances').upsert({
+    client_id: clientId, network_id: networkId,
+    balance: amount, updated_at: new Date().toISOString()
+  }, { onConflict: 'client_id,network_id' });
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast('Solde mis à jour', 'success');
+  closeModal('modal-add-balance');
+  loadNetworks();
+}
+
+async function openReconModal(networkId, networkName) {
+  document.getElementById('recon-network-name').textContent = networkName;
+  document.getElementById('recon-content').innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px">Chargement...</div>';
+  openModal('modal-recon');
+  const { data } = await sb.from('network_monthly_summary')
+    .select('*')
+    .eq('network_id', networkId)
+    .order('period', { ascending: false })
+    .limit(12);
+  if (!data?.length) {
+    document.getElementById('recon-content').innerHTML = '<div style="text-align:center;color:var(--text3)">Aucune transaction réseau</div>';
+    return;
+  }
+  document.getElementById('recon-content').innerHTML = '<table>'
+    + '<thead><tr><th>Période</th><th>De</th><th>Vers</th><th>Transactions</th><th>Brut</th><th>Frais Modulimo (5%)</th><th>Net propriétaire</th></tr></thead>'
+    + '<tbody>'
+    + data.map(r => '<tr>'
+      + '<td>' + new Date(r.period).toLocaleDateString('fr-CA', { year: 'numeric', month: 'long' }) + '</td>'
+      + '<td>' + r.from_client + '</td>'
+      + '<td>' + r.to_client + '</td>'
+      + '<td>' + r.nb_transactions + '</td>'
+      + '<td>' + parseFloat(r.total_gross).toFixed(2) + ' $</td>'
+      + '<td style="color:var(--accent)">' + parseFloat(r.total_fees_modulimo).toFixed(2) + ' $</td>'
+      + '<td style="color:var(--accent2)">' + parseFloat(r.total_net_to_owner).toFixed(2) + ' $</td>'
+      + '</tr>').join('')
+    + '</tbody></table>';
 }
 
 async function openNetworkModal() { openModal('modal-network'); }
