@@ -230,6 +230,87 @@
   </div>
 </div>
 
+<!-- Modal Ressources Partagées -->
+<div class="modal-overlay" id="modal-resources">
+  <div class="modal" style="max-width:820px">
+    <div class="modal-header">
+      <span class="modal-title">🔗 Ressources partagées — <span id="res-network-name"></span></span>
+      <button onclick="closeModal('modal-resources')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+        <button class="btn btn-primary btn-sm" onclick="openAddResourceForm()">+ Ajouter une ressource</button>
+      </div>
+
+      <!-- Formulaire ajout/édition -->
+      <div id="res-form" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:var(--border-radius-md);padding:16px;margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin-bottom:12px;">Détails de la ressource</div>
+        <input type="hidden" id="res-id">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-group">
+            <label>Bâtiment propriétaire</label>
+            <select id="res-client"></select>
+          </div>
+          <div class="form-group">
+            <label>Type</label>
+            <select id="res-type">
+              <option value="space">🏠 Espace commun</option>
+              <option value="vehicle">🚗 Véhicule</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Nom de la ressource</label>
+            <input id="res-name" placeholder="Ex: Salle communautaire A">
+          </div>
+          <div class="form-group">
+            <label>UUID de la ressource</label>
+            <input id="res-resource-id" placeholder="UUID dans le Supabase du bâtiment">
+          </div>
+          <div class="form-group">
+            <label>Fenêtre de priorité (heures)</label>
+            <input id="res-priority" type="number" value="24" min="0">
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;">
+              <input type="checkbox" id="res-active" checked> Ressource active
+            </label>
+          </div>
+          <div class="form-group">
+            <label>Disponible de (heure)</label>
+            <input id="res-from" type="time" placeholder="18:00">
+          </div>
+          <div class="form-group">
+            <label>Disponible jusqu'à (heure)</label>
+            <input id="res-to" type="time" placeholder="08:00">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('res-form').style.display='none'">Annuler</button>
+          <button class="btn btn-primary btn-sm" onclick="saveSharedResource()">Enregistrer</button>
+        </div>
+      </div>
+
+      <!-- Tableau des ressources -->
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Ressource</th><th>Bâtiment</th><th>Type</th>
+              <th>Disponibilité</th><th>Priorité</th><th>Statut</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="res-tbody">
+            <tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucune ressource</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-resources')">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal Ajouter Membre -->
 <div class="modal-overlay" id="modal-add-member">
   <div class="modal" style="max-width:480px">
@@ -763,6 +844,8 @@ async function loadNetworks() {
     if (remBtn) { removeMember(remBtn.dataset.member); return; }
     const addBtn = e.target.closest('.net-add-member');
     if (addBtn) { openAddMemberModal(addBtn.dataset.nid); return; }
+    const resBtn = e.target.closest('.net-resources');
+    if (resBtn) { openResourcesModal(resBtn.dataset.nid, resBtn.dataset.nname); return; }
     const reconBtn = e.target.closest('.net-recon');
     if (reconBtn) { openReconModal(reconBtn.dataset.nid, reconBtn.dataset.nname); return; }
   });
@@ -797,12 +880,149 @@ async function loadNetworks() {
       + '<div style="display:flex;gap:8px;align-items:center;">'
       + '<span class="badge ' + (n.active ? 'badge-green' : 'badge-gray') + '">' + (n.active ? 'Actif' : 'Inactif') + '</span>'
       + '<button class="btn btn-secondary btn-sm net-add-member" data-nid="' + n.id + '">+ Membre</button>'
+      + '<button class="btn btn-secondary btn-sm net-resources" data-nid="' + n.id + '" data-nname="' + n.name.replace(/"/g,'') + '">🔗 Ressources</button>'
       + '<button class="btn btn-secondary btn-sm net-recon" data-nid="' + n.id + '" data-nname="' + n.name.replace(/"/g,'') + '">📊 Réconciliation</button>'
       + '</div></div>'
       + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px">Membres &amp; soldes réseau</div>'
       + memberRows
       + '</div>';
   }).join('');
+}
+
+// ── GESTION DES RESSOURCES PARTAGÉES ────────────────────────────────────────
+let currentResourcesNetworkId = null;
+let currentResourcesNetworkName = '';
+let sharedResourcesCache = [];
+
+async function openResourcesModal(networkId, networkName) {
+  currentResourcesNetworkId = networkId;
+  currentResourcesNetworkName = networkName;
+  document.getElementById('res-network-name').textContent = networkName;
+  await loadSharedResources();
+  openModal('modal-resources');
+}
+
+async function loadSharedResources() {
+  const tbody = document.getElementById('res-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text3)">Chargement...</td></tr>';
+
+  const { data } = await sb.from('shared_resources')
+    .select('*, clients(name)')
+    .eq('network_id', currentResourcesNetworkId)
+    .order('created_at', { ascending: false });
+
+  sharedResourcesCache = data || [];
+
+  if (!sharedResourcesCache.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text3)">Aucune ressource partagée</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = sharedResourcesCache.map(r => {
+    const icon = r.resource_type === 'space' ? '🏠' : '🚗';
+    const from  = r.shared_from ? r.shared_from.slice(0,5) : '—';
+    const to    = r.shared_to   ? r.shared_to.slice(0,5)   : '—';
+    return '<tr>'
+      + '<td>' + icon + ' ' + escHtml(r.resource_name) + '</td>'
+      + '<td>' + (r.clients?.name || '—') + '</td>'
+      + '<td><span class="badge badge-gray">' + r.resource_type + '</span></td>'
+      + '<td>' + from + ' – ' + to + '</td>'
+      + '<td>' + (r.priority_hours || 24) + 'h</td>'
+      + '<td><span class="badge ' + (r.active ? 'badge-green' : 'badge-gray') + '">' + (r.active ? 'Active' : 'Inactive') + '</span></td>'
+      + '<td class="td-actions">'
+      + '<button class="btn btn-secondary btn-sm" onclick="editSharedResource(' + "'" + r.id + "'" + ')">Modifier</button>'
+      + '<button class="btn btn-danger btn-sm" onclick="deleteSharedResource(' + "'" + r.id + "'" + ')">Supprimer</button>'
+      + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+function openAddResourceForm() {
+  document.getElementById('res-id').value = '';
+  document.getElementById('res-type').value = 'space';
+  document.getElementById('res-name').value = '';
+  document.getElementById('res-resource-id').value = '';
+  document.getElementById('res-priority').value = '24';
+  document.getElementById('res-from').value = '';
+  document.getElementById('res-to').value = '';
+  document.getElementById('res-active').checked = true;
+  // Charger les clients du réseau dans le sélecteur
+  loadResourceClientSelect();
+  document.getElementById('res-form').style.display = 'block';
+}
+
+async function loadResourceClientSelect() {
+  const { data: members } = await sb.from('network_members')
+    .select('client_id, clients(name)')
+    .eq('network_id', currentResourcesNetworkId);
+  const sel = document.getElementById('res-client');
+  sel.innerHTML = (members || []).map(m =>
+    '<option value="' + m.client_id + '">' + (m.clients?.name || m.client_id) + '</option>'
+  ).join('');
+}
+
+function editSharedResource(id) {
+  const r = sharedResourcesCache.find(x => x.id === id);
+  if (!r) return;
+  document.getElementById('res-id').value           = r.id;
+  document.getElementById('res-type').value         = r.resource_type;
+  document.getElementById('res-name').value         = r.resource_name;
+  document.getElementById('res-resource-id').value  = r.resource_id;
+  document.getElementById('res-priority').value     = r.priority_hours || 24;
+  document.getElementById('res-from').value         = r.shared_from ? r.shared_from.slice(0,5) : '';
+  document.getElementById('res-to').value           = r.shared_to   ? r.shared_to.slice(0,5)   : '';
+  document.getElementById('res-active').checked     = !!r.active;
+  loadResourceClientSelect().then(() => {
+    document.getElementById('res-client').value = r.source_client_id;
+  });
+  document.getElementById('res-form').style.display = 'block';
+}
+
+async function saveSharedResource() {
+  const id         = document.getElementById('res-id').value;
+  const clientId   = document.getElementById('res-client').value;
+  const type       = document.getElementById('res-type').value;
+  const name       = document.getElementById('res-name').value.trim();
+  const resourceId = document.getElementById('res-resource-id').value.trim();
+  const priority   = parseInt(document.getElementById('res-priority').value) || 24;
+  const from       = document.getElementById('res-from').value || null;
+  const to         = document.getElementById('res-to').value   || null;
+  const active     = document.getElementById('res-active').checked;
+
+  if (!name || !resourceId || !clientId) { toast('Nom, UUID et bâtiment requis', 'error'); return; }
+
+  const payload = {
+    network_id:       currentResourcesNetworkId,
+    source_client_id: clientId,
+    resource_type:    type,
+    resource_name:    name,
+    resource_id:      resourceId,
+    priority_hours:   priority,
+    shared_from:      from,
+    shared_to:        to,
+    active
+  };
+
+  const { error } = id
+    ? await sb.from('shared_resources').update(payload).eq('id', id)
+    : await sb.from('shared_resources').insert(payload);
+
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast(id ? 'Ressource modifiée' : 'Ressource ajoutée', 'success');
+  document.getElementById('res-form').style.display = 'none';
+  loadSharedResources();
+}
+
+async function deleteSharedResource(id) {
+  if (!confirm('Supprimer cette ressource partagée ?')) return;
+  const { error } = await sb.from('shared_resources').delete().eq('id', id);
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast('Ressource supprimée', 'success');
+  loadSharedResources();
+}
+
+function escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 async function openAddMemberModal(networkId) {
