@@ -121,6 +121,7 @@
       <div class="nav-item" onclick="nav('clients')">🏢 Clients</div>
       <div class="nav-item" onclick="nav('licences')">🗝 Licences</div>
       <div class="nav-item" onclick="nav('networks')">🔗 Réseaux</div>
+      <div class="nav-item" onclick="nav('plans')">📦 Forfaits</div>
     </div>
     <div class="content">
 
@@ -172,6 +173,59 @@
         <div id="networks-content"></div>
       </div>
 
+    <!-- PLANS -->
+      <div id="page-plans" class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div class="page-title" style="margin:0">Forfaits</div>
+          <button class="btn btn-primary btn-sm" onclick="openPlanModal()">+ Nouveau forfait</button>
+        </div>
+        <div id="plans-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal Plan -->
+<div class="modal-overlay" id="modal-plan">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <span class="modal-title" id="plan-modal-title">Nouveau forfait</span>
+      <button onclick="closeModal('modal-plan')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="plan-id">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div class="form-group"><label>Code</label><input id="plan-code" placeholder="starter"></div>
+        <div class="form-group"><label>Nom</label><input id="plan-name" placeholder="Starter"></div>
+        <div class="form-group"><label>Prix mensuel ($)</label><input id="plan-price" type="number" placeholder="Laisser vide = sur devis"></div>
+        <div class="form-group"><label>Unités max</label><input id="plan-units" type="number" placeholder="Laisser vide = illimité"></div>
+        <div class="form-group"><label>Ordre d'affichage</label><input id="plan-order" type="number" value="1"></div>
+        <div class="form-group" style="display:flex;align-items:flex-end;gap:16px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0 0 0;">
+            <input type="checkbox" id="plan-featured"> Mis en avant
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;">
+            <input type="checkbox" id="plan-active" checked> Actif
+          </label>
+        </div>
+      </div>
+      <div style="margin:14px 0 10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">Modules inclus</div>
+      <div style="display:flex;gap:20px;margin-bottom:16px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+          <input type="checkbox" id="plan-mod-trips"> 🚗 Auto-partage
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+          <input type="checkbox" id="plan-mod-lunch"> 🍱 Machine Lunch
+        </label>
+      </div>
+      <div style="margin:14px 0 10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">Fonctionnalités</div>
+      <div id="plan-features-list" style="margin-bottom:10px;"></div>
+      <button class="btn btn-secondary btn-sm" onclick="addFeatureRow()">+ Ajouter une fonctionnalité</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-plan')">Annuler</button>
+      <button class="btn btn-primary" onclick="savePlan()">Enregistrer</button>
     </div>
   </div>
 </div>
@@ -268,6 +322,136 @@ let currentAdmin = null;
 let clientsCache = [];
 let licencesCache = [];
 
+// PLANS
+let plansCache = [];
+
+async function loadPlans() {
+  const { data: plans } = await sb.from('plans').select('*, plan_features(*)').order('sort_order');
+  plansCache = plans || [];
+  const grid = document.getElementById('plans-grid');
+  if (!plansCache.length) { grid.innerHTML = '<div class="card" style="text-align:center;color:var(--text3)">Aucun forfait configuré</div>'; return; }
+  grid.innerHTML = plansCache.map(p => {
+    const feats = (p.plan_features || []).sort((a,b) => a.sort_order - b.sort_order);
+    const mods = p.modules || {};
+    return `<div class="card" style="position:relative;${p.featured ? 'border-color:var(--accent)' : ''}">
+      ${p.featured ? '<div style="position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--accent);color:#0f0f0f;font-size:11px;font-weight:700;padding:3px 12px;border-radius:99px;white-space:nowrap;">Le plus populaire</div>' : ''}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div>
+          <div style="font-weight:700;font-size:15px">${p.name}</div>
+          <div style="font-size:1.4rem;font-weight:600;color:var(--accent)">${p.price_monthly ? p.price_monthly + ' $/mois' : 'Sur devis'}</div>
+          <div style="font-size:12px;color:var(--text3)">${p.max_units ? 'Jusqu'à ' + p.max_units + ' unités' : 'Unités illimitées'}</div>
+        </div>
+        <span class="badge ${p.active ? 'badge-green' : 'badge-gray'}">${p.active ? 'Actif' : 'Inactif'}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">
+        ${mods.trips ? '🚗 Auto-partage · ' : ''}${mods.lunch ? '🍱 Machine Lunch' : ''}
+      </div>
+      <ul style="list-style:none;padding:0;margin:0 0 16px;font-size:13px;">
+        ${feats.map(f => `<li style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);color:${f.included ? 'var(--text2)' : 'var(--text3)'}">
+          <span style="color:${f.included ? 'var(--accent2)' : 'var(--text3)'};">${f.included ? '✓' : '–'}</span> ${f.label}
+        </li>`).join('')}
+      </ul>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary btn-sm" style="flex:1" onclick='editPlan(${JSON.stringify(p)})'>Modifier</button>
+        <button class="btn btn-danger btn-sm" onclick="togglePlan('${p.id}', ${!p.active})">${p.active ? 'Désactiver' : 'Activer'}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openPlanModal() {
+  document.getElementById('plan-id').value = '';
+  document.getElementById('plan-code').value = '';
+  document.getElementById('plan-name').value = '';
+  document.getElementById('plan-price').value = '';
+  document.getElementById('plan-units').value = '';
+  document.getElementById('plan-order').value = '1';
+  document.getElementById('plan-featured').checked = false;
+  document.getElementById('plan-active').checked = true;
+  document.getElementById('plan-mod-trips').checked = false;
+  document.getElementById('plan-mod-lunch').checked = false;
+  document.getElementById('plan-features-list').innerHTML = '';
+  document.getElementById('plan-modal-title').textContent = 'Nouveau forfait';
+  openModal('modal-plan');
+}
+
+function editPlan(p) {
+  document.getElementById('plan-id').value      = p.id;
+  document.getElementById('plan-code').value    = p.code;
+  document.getElementById('plan-name').value    = p.name;
+  document.getElementById('plan-price').value   = p.price_monthly || '';
+  document.getElementById('plan-units').value   = p.max_units || '';
+  document.getElementById('plan-order').value   = p.sort_order || 1;
+  document.getElementById('plan-featured').checked = !!p.featured;
+  document.getElementById('plan-active').checked   = !!p.active;
+  document.getElementById('plan-mod-trips').checked = !!(p.modules?.trips);
+  document.getElementById('plan-mod-lunch').checked = !!(p.modules?.lunch);
+  const list = document.getElementById('plan-features-list');
+  const feats = (p.plan_features || []).sort((a,b) => a.sort_order - b.sort_order);
+  list.innerHTML = '';
+  feats.forEach(f => addFeatureRow(f.label, f.included));
+  document.getElementById('plan-modal-title').textContent = 'Modifier forfait';
+  openModal('modal-plan');
+}
+
+function addFeatureRow(label = '', included = true) {
+  const list = document.getElementById('plan-features-list');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px;';
+  row.innerHTML = `
+    <input type="checkbox" ${included ? 'checked' : ''} style="width:auto;flex-shrink:0;">
+    <input type="text" value="${label}" placeholder="Ex: Réservation d'espaces communs" style="flex:1;">
+    <button onclick="this.parentElement.remove()" style="background:none;border:none;color:var(--accent3);cursor:pointer;font-size:16px;flex-shrink:0;">✕</button>`;
+  list.appendChild(row);
+}
+
+async function savePlan() {
+  const id = document.getElementById('plan-id').value;
+  const payload = {
+    code:          document.getElementById('plan-code').value.trim(),
+    name:          document.getElementById('plan-name').value.trim(),
+    price_monthly: parseFloat(document.getElementById('plan-price').value) || null,
+    max_units:     parseInt(document.getElementById('plan-units').value) || null,
+    sort_order:    parseInt(document.getElementById('plan-order').value) || 1,
+    featured:      document.getElementById('plan-featured').checked,
+    active:        document.getElementById('plan-active').checked,
+    modules:       { trips: document.getElementById('plan-mod-trips').checked, lunch: document.getElementById('plan-mod-lunch').checked }
+  };
+  if (!payload.code || !payload.name) { toast('Code et nom requis', 'error'); return; }
+
+  let planId = id;
+  if (id) {
+    const { error } = await sb.from('plans').update(payload).eq('id', id);
+    if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  } else {
+    const { data, error } = await sb.from('plans').insert(payload).select().single();
+    if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+    planId = data.id;
+  }
+
+  // Sauvegarder les features
+  await sb.from('plan_features').delete().eq('plan_id', planId);
+  const rows = document.getElementById('plan-features-list').querySelectorAll('div');
+  const features = Array.from(rows).map((row, i) => ({
+    plan_id:    planId,
+    label:      row.querySelectorAll('input')[1].value.trim(),
+    included:   row.querySelectorAll('input')[0].checked,
+    sort_order: i + 1
+  })).filter(f => f.label);
+  if (features.length) await sb.from('plan_features').insert(features);
+
+  toast(id ? 'Forfait modifié' : 'Forfait créé', 'success');
+  closeModal('modal-plan');
+  loadPlans();
+}
+
+async function togglePlan(id, active) {
+  const { error } = await sb.from('plans').update({ active }).eq('id', id);
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast(active ? 'Forfait activé' : 'Forfait désactivé', 'success');
+  loadPlans();
+}
+
 // AUTH
 async function doLogin() {
   const email = document.getElementById('login-email').value.trim();
@@ -298,6 +482,7 @@ function nav(page) {
   if (page === 'clients')   loadClients();
   if (page === 'licences')  loadLicences();
   if (page === 'networks')  loadNetworks();
+  if (page === 'plans')     loadPlans();
 }
 
 // DASHBOARD
