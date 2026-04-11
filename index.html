@@ -122,6 +122,7 @@
       <div class="nav-item" onclick="nav('licences')">🗝 Licences</div>
       <div class="nav-item" onclick="nav('networks')">🔗 Réseaux</div>
       <div class="nav-item" onclick="nav('plans')">📦 Forfaits</div>
+      <div class="nav-item" onclick="nav('lunch')">🍱 Machine Lunch</div>
     </div>
     <div class="content">
 
@@ -182,6 +183,58 @@
         <div id="plans-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;"></div>
       </div>
 
+      <!-- MACHINE LUNCH -->
+      <div id="page-lunch" class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div class="page-title" style="margin:0">🍱 Machine Lunch</div>
+          <button class="btn btn-primary btn-sm" onclick="openLunchMachineModal()">+ Nouvelle machine</button>
+        </div>
+        <div class="stats-grid" id="lunch-stats-grid" style="margin-bottom:20px;"></div>
+        <div id="lunch-machines-list"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal Machine Lunch -->
+<div class="modal-overlay" id="modal-lunch-machine">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Nouvelle machine Lunch</span>
+      <button onclick="closeModal('modal-lunch-machine')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="lm-id">
+      <div class="form-group">
+        <label>ID machine <span style="color:var(--text3);font-size:11px;">(unique, ex: pointe-est-1)</span></label>
+        <input id="lm-machine-id" placeholder="nom-building-1">
+      </div>
+      <div class="form-group">
+        <label>Nom affiché</label>
+        <input id="lm-name" placeholder="Machine Lunch — Nom du building">
+      </div>
+      <div class="form-group">
+        <label>Licence associée</label>
+        <select id="lm-licence"><option value="">— Choisir —</option></select>
+      </div>
+      <div class="form-group">
+        <label>PIN admin kiosque</label>
+        <input id="lm-pin" placeholder="1234" maxlength="4" style="width:100px;">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:4px;">
+        <div class="form-group"><label>Zone A — Nom</label><input id="lm-za-name" value="Réfrigéré"></div>
+        <div class="form-group"><label>Zone A — Consigne (°C)</label><input id="lm-za-sp" type="number" value="4"></div>
+        <div class="form-group"><label>Zone A — Nb cases</label><input id="lm-za-count" type="number" value="6"></div>
+        <div class="form-group"><label>Zone B — Nom</label><input id="lm-zb-name" value="Tempéré"></div>
+        <div class="form-group"><label>Zone B — Consigne (°C)</label><input id="lm-zb-sp" type="number" value="18"></div>
+        <div class="form-group"><label>Zone B — Nb cases</label><input id="lm-zb-count" type="number" value="6"></div>
+      </div>
+      <div id="lm-create-status" style="font-size:12px;margin-top:8px;min-height:16px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-lunch-machine')">Annuler</button>
+      <button class="btn btn-primary" onclick="saveLunchMachine()">✓ Créer la machine</button>
     </div>
   </div>
 </div>
@@ -619,6 +672,7 @@ function nav(page) {
   if (page === 'licences')  loadLicences();
   if (page === 'networks')  loadNetworks();
   if (page === 'plans')     loadPlans();
+  if (page === 'lunch')     loadLunch();
 }
 
 // DASHBOARD
@@ -1149,6 +1203,197 @@ function toast(msg, type = 'success') {
     loadDashboard();
   }
 })();
+
+// ═══════════════════════════════════════════════════════════
+//  MACHINE LUNCH
+// ═══════════════════════════════════════════════════════════
+// sbLM pointe vers modulimo-central (même Supabase que sb)
+const sbLM = sb; // lunch_machines/slots/zones sont dans modulimo-central
+const KIOSK_BASE = 'https://simonvelucia-afk.github.io/LunchMachine/';
+
+async function loadLunch() {
+  const statsGrid = document.getElementById('lunch-stats-grid');
+  const listEl    = document.getElementById('lunch-machines-list');
+  if(statsGrid) statsGrid.innerHTML = '<div style="color:var(--text3);font-size:13px;">Chargement…</div>';
+  if(listEl) listEl.innerHTML = '';
+
+  try {
+    const { data: machines, error } = await sbLM.from('lunch_machines').select('*').order('name');
+    if(error) throw error;
+
+    const { data: slots } = await sbLM.from('lunch_slots').select('machine_id, description, reserved, price');
+    const { data: transactions } = await sbLM.from('lunch_transactions').select('machine_id, price, created_at')
+      .gte('created_at', new Date(Date.now() - 30*24*3600*1000).toISOString());
+
+    const totalMachines = machines ? machines.length : 0;
+    const totalSlots    = slots ? slots.length : 0;
+    const filledSlots   = slots ? slots.filter(s => s.description).length : 0;
+    const totalRevenue  = transactions ? transactions.reduce((s,t) => s + (parseFloat(t.price)||0), 0) : 0;
+
+    if(statsGrid) statsGrid.innerHTML = `
+      <div class="stat-card"><div class="stat-num">${totalMachines}</div><div class="stat-lbl">Machines</div></div>
+      <div class="stat-card"><div class="stat-num">${filledSlots}/${totalSlots}</div><div class="stat-lbl">Cases occupées</div></div>
+      <div class="stat-card"><div class="stat-num">${(transactions||[]).length}</div><div class="stat-lbl">Achats (30j)</div></div>
+      <div class="stat-card"><div class="stat-num">${totalRevenue.toFixed(2)} $</div><div class="stat-lbl">Revenus (30j)</div></div>
+    `;
+
+    if(!machines || !machines.length) {
+      listEl.innerHTML = '<div class="card" style="text-align:center;color:var(--text3);padding:40px;">Aucune machine — cliquez sur + Nouvelle machine</div>';
+      return;
+    }
+
+    listEl.innerHTML = machines.map(m => {
+      const mSlots   = (slots||[]).filter(s => s.machine_id === m.id);
+      const mFilled  = mSlots.filter(s => s.description).length;
+      const mRevenue = (transactions||[]).filter(t => t.machine_id === m.id).reduce((s,t) => s+(parseFloat(t.price)||0), 0);
+      const kioskUrl = KIOSK_BASE + '?machine=' + m.id;
+      return `
+        <div class="card" style="margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+            <div>
+              <div style="font-weight:600;font-size:15px;margin-bottom:2px;">${m.name}</div>
+              <div style="font-size:12px;color:var(--text3);font-family:monospace;">${m.id}</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <span class="badge ${m.active ? 'badge-green' : 'badge-gray'}">${m.active ? 'Actif' : 'Inactif'}</span>
+              <span class="badge badge-yellow">${mFilled}/${mSlots.length} cases</span>
+              <span class="badge badge-gray">${mRevenue.toFixed(2)} $ / 30j</span>
+            </div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+            <a href="${kioskUrl}" target="_blank" class="btn btn-primary btn-sm">🖥 Kiosque</a>
+            <button class="btn btn-secondary btn-sm" onclick="viewLunchSlots('${m.id}','${m.name.replace(/'/g,"\\'")}')">📋 Cases</button>
+            <button class="btn btn-secondary btn-sm" onclick="viewLunchTransactions('${m.id}','${m.name.replace(/'/g,"\\'")}')">📊 Transactions</button>
+            <button class="btn btn-danger btn-sm" onclick="toggleLunchMachine('${m.id}',${!m.active})">${m.active ? 'Désactiver' : 'Activer'}</button>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text3);">
+            URL : <a href="${kioskUrl}" target="_blank" style="color:var(--accent2);">${kioskUrl}</a>
+          </div>
+        </div>`;
+    }).join('');
+
+  } catch(err) {
+    if(statsGrid) statsGrid.innerHTML = '';
+    if(listEl) listEl.innerHTML = `<div class="card" style="color:var(--accent3);">Erreur: ${err.message}</div>`;
+  }
+}
+
+async function viewLunchSlots(machineId, machineName) {
+  const { data: slots } = await sbLM.from('lunch_slots').select('*').eq('machine_id', machineId).order('slot_num');
+  const rows = (slots||[]).map(s => `
+    <tr>
+      <td><b>#${s.slot_num}</b></td>
+      <td>${s.zone_key}</td>
+      <td>${s.description || '<span style="color:var(--text3)">— vide</span>'}</td>
+      <td>${s.price > 0 ? s.price.toFixed(2) + ' $' : '—'}</td>
+      <td>${s.reserved ? '<span class="badge badge-yellow">Réservé</span>' : '<span class="badge badge-gray">Libre</span>'}</td>
+      <td style="font-size:11px;color:var(--text3);">${s.chef || '—'}</td>
+    </tr>`).join('');
+  showInfoModal(machineName + ' — Cases',
+    `<div style="overflow-x:auto"><table>
+      <thead><tr><th>#</th><th>Zone</th><th>Contenu</th><th>Prix</th><th>Statut</th><th>Chef</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:var(--text3)">Aucune case</td></tr>'}</tbody>
+    </table></div>`);
+}
+
+async function viewLunchTransactions(machineId, machineName) {
+  const { data: txs } = await sbLM.from('lunch_transactions').select('*').eq('machine_id', machineId)
+    .order('created_at', { ascending: false }).limit(50);
+  const rows = (txs||[]).map(t => `
+    <tr>
+      <td style="font-size:11px;">${new Date(t.created_at).toLocaleString('fr-CA')}</td>
+      <td>${t.buyer_name || '—'}</td>
+      <td>${t.price > 0 ? t.price.toFixed(2) + ' $' : 'Gratuit'}</td>
+    </tr>`).join('');
+  showInfoModal(machineName + ' — Transactions',
+    `<div style="overflow-x:auto"><table>
+      <thead><tr><th>Date</th><th>Acheteur</th><th>Prix</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="3" style="text-align:center;color:var(--text3)">Aucune transaction</td></tr>'}</tbody>
+    </table></div>`);
+}
+
+async function toggleLunchMachine(machineId, active) {
+  await sbLM.from('lunch_machines').update({ active }).eq('id', machineId);
+  toast(active ? 'Machine activée' : 'Machine désactivée');
+  loadLunch();
+}
+
+function showInfoModal(title, content) {
+  let m = document.getElementById('modal-info-lunch');
+  if(!m) {
+    m = document.createElement('div');
+    m.id = 'modal-info-lunch';
+    m.className = 'modal-overlay';
+    m.innerHTML = `
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header">
+          <span class="modal-title" id="info-lunch-title"></span>
+          <button onclick="closeModal('modal-info-lunch')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button>
+        </div>
+        <div class="modal-body" id="info-lunch-body"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modal-info-lunch')">Fermer</button></div>
+      </div>`;
+    document.body.appendChild(m);
+  }
+  document.getElementById('info-lunch-title').textContent = title;
+  document.getElementById('info-lunch-body').innerHTML = content;
+  m.classList.add('open');
+}
+
+async function openLunchMachineModal() {
+  // Peupler le select des licences
+  const sel = document.getElementById('lm-licence');
+  sel.innerHTML = '<option value="">— Choisir une licence —</option>';
+  (licencesCache || []).forEach(l => {
+    const o = document.createElement('option');
+    o.value = l.id;
+    o.textContent = (l.client_name || l.id);
+    sel.appendChild(o);
+  });
+  ['lm-machine-id','lm-name'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('lm-pin').value = '1234';
+  document.getElementById('lm-create-status').textContent = '';
+  document.getElementById('modal-lunch-machine').classList.add('open');
+}
+
+async function saveLunchMachine() {
+  const machineId = document.getElementById('lm-machine-id').value.trim();
+  const name      = document.getElementById('lm-name').value.trim();
+  const pin       = document.getElementById('lm-pin').value.trim() || '1234';
+  const zaName    = document.getElementById('lm-za-name').value.trim() || 'Réfrigéré';
+  const zaSp      = parseFloat(document.getElementById('lm-za-sp').value) || 4;
+  const zaCount   = parseInt(document.getElementById('lm-za-count').value) || 6;
+  const zbName    = document.getElementById('lm-zb-name').value.trim() || 'Tempéré';
+  const zbSp      = parseFloat(document.getElementById('lm-zb-sp').value) || 18;
+  const zbCount   = parseInt(document.getElementById('lm-zb-count').value) || 6;
+  const statusEl  = document.getElementById('lm-create-status');
+
+  if(!machineId || !name) { statusEl.style.color='var(--accent3)'; statusEl.textContent='⚠ ID et nom requis.'; return; }
+  statusEl.style.color='var(--text3)'; statusEl.textContent='Création en cours…';
+
+  try {
+    const { error: e1 } = await sbLM.from('lunch_machines').insert({ id: machineId, name, pin, active: true });
+    if(e1) throw e1;
+
+    const { error: e2 } = await sbLM.from('lunch_zones').insert([
+      { machine_id:machineId, zone_key:'A', name:zaName, setpoint:zaSp, setpoint_min:zaSp-2, setpoint_max:zaSp+2, actual:zaSp, slot_count:zaCount },
+      { machine_id:machineId, zone_key:'B', name:zbName, setpoint:zbSp, setpoint_min:zbSp-3, setpoint_max:zbSp+4, actual:zbSp, slot_count:zbCount }
+    ]);
+    if(e2) throw e2;
+
+    const slotsA = Array.from({length:zaCount}, (_,i) => ({ machine_id:machineId, zone_key:'A', slot_num:i+1 }));
+    const slotsB = Array.from({length:zbCount}, (_,i) => ({ machine_id:machineId, zone_key:'B', slot_num:zaCount+i+1 }));
+    const { error: e3 } = await sbLM.from('lunch_slots').insert([...slotsA, ...slotsB]);
+    if(e3) throw e3;
+
+    closeModal('modal-lunch-machine');
+    toast('Machine créée ! URL : ' + KIOSK_BASE + '?machine=' + machineId);
+    loadLunch();
+  } catch(err) {
+    statusEl.style.color='var(--accent3)';
+    statusEl.textContent = '✗ ' + err.message;
+  }
+}
 </script>
 </body>
 </html>
