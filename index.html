@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Modulimo — Admin Central</title>
+<link rel="icon" type="image/png" href="https://simonvelucia-afk.github.io/modulimo-home/images/favicon_Modulimo.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -145,7 +146,7 @@
         </div>
         <div class="card" style="padding:0">
           <table>
-            <thead><tr><th>Nom</th><th>Ville</th><th>Contact</th><th>Créé le</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Nom</th><th>Type</th><th>Ville</th><th>Contact</th><th>Admin CoHabitat</th><th>Créé le</th><th>Actions</th></tr></thead>
             <tbody id="clients-tbody"></tbody>
           </table>
         </div>
@@ -174,11 +175,14 @@
         <div id="networks-content"></div>
       </div>
 
-    <!-- PLANS -->
+      <!-- PLANS -->
       <div id="page-plans" class="page">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
           <div class="page-title" style="margin:0">Forfaits</div>
           <button class="btn btn-primary btn-sm" onclick="openPlanModal()">+ Nouveau forfait</button>
+        </div>
+        <div style="background:rgba(200,169,110,.08);border:1px solid rgba(200,169,110,.25);border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:var(--text2);">
+          <span style="color:var(--accent);font-weight:600;">📌 Logique forfaits :</span> Un seul forfait est vendu aux <strong>propriétaires d'immeuble</strong> — ce sont les locataires qui consomment les services CoHabitat. Le propriétaire souscrit pour son immeuble entier et gère l'accès de ses locataires (Local ou Réseau).
         </div>
         <div id="plans-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;"></div>
       </div>
@@ -420,10 +424,26 @@
     <div class="modal-body">
       <input type="hidden" id="client-id">
       <div class="form-group"><label>Nom du projet</label><input id="c-name" placeholder="Co-housing Pointe-Est"></div>
+      <div class="form-group">
+        <label>Type de client</label>
+        <select id="c-type" onchange="onClientTypeChange()">
+          <option value="owner">🏢 Propriétaire d'immeuble</option>
+          <option value="local">🏠 Locataire local</option>
+          <option value="network">🔗 Locataire réseau</option>
+        </select>
+      </div>
       <div class="form-group"><label>Adresse</label><input id="c-address" placeholder="123 Rue Bureau"></div>
       <div class="form-group"><label>Ville</label><input id="c-city" value="Montréal"></div>
       <div class="form-group"><label>Courriel contact</label><input id="c-email" type="email"></div>
       <div class="form-group"><label>Nom contact</label><input id="c-contact"></div>
+      <div id="admin-cohabitat-section" class="form-group" style="border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.02);">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:10px;">⚙ Admin CoHabitat</div>
+        <div class="form-group" style="margin-bottom:10px;"><label>Bâtisse CoHabitat</label><input id="c-admin-building" placeholder="Pointe Est"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:13px;color:var(--text2);">Configurer comme admin de cette bâtisse</span>
+          <label class="toggle-sw"><input type="checkbox" id="c-is-admin"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+        </div>
+      </div>
       <div class="form-group"><label>Notes</label><textarea id="c-notes" rows="3"></textarea></div>
     </div>
     <div class="modal-footer">
@@ -505,6 +525,13 @@ let currentAdmin = null;
 let clientsCache = [];
 let licencesCache = [];
 
+function onClientTypeChange() {
+  const type = document.getElementById('c-type').value;
+  const section = document.getElementById('admin-cohabitat-section');
+  // La section admin CoHabitat est pertinente pour tous les types mais surtout propriétaire
+  section.style.display = (type === 'local' || type === 'network') ? 'block' : 'block';
+}
+
 // PLANS
 let plansCache = [];
 
@@ -524,7 +551,10 @@ async function loadPlans() {
           <div style="font-size:1.4rem;font-weight:600;color:var(--accent)">${p.price_monthly ? p.price_monthly + ' $/mois' : 'Sur devis'}</div>
           <div style="font-size:12px;color:var(--text3)">${p.max_units ? 'Jusqu\'à ' + p.max_units + ' unités' : 'Unités illimitées'}</div>
         </div>
-        <span class="badge ${p.active ? 'badge-green' : 'badge-gray'}">${p.active ? 'Actif' : 'Inactif'}</span>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
+          <span class="badge ${p.active ? 'badge-green' : 'badge-gray'}">${p.active ? 'Actif' : 'Inactif'}</span>
+          <span class="badge badge-yellow" style="font-size:10px;">🏢 Propriétaire</span>
+        </div>
       </div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">
         ${mods.trips ? '🚗 Auto-partage · ' : ''}${mods.lunch ? '🍱 Machine Lunch' : ''}
@@ -707,23 +737,31 @@ async function loadDashboard() {
 async function loadClients() {
   const { data } = await sb.from('clients').select('*').order('name');
   clientsCache = data || [];
-  document.getElementById('clients-tbody').innerHTML = clientsCache.map(c => `
-    <tr>
+  document.getElementById('clients-tbody').innerHTML = clientsCache.map(c => {
+    const typeLabel = c.client_type === 'owner' ? '🏢 Propriétaire' : c.client_type === 'local' ? '🏠 Locataire local' : c.client_type === 'network' ? '🔗 Locataire réseau' : '—';
+    const adminBadge = c.is_admin ? `<span class="badge badge-green">Admin</span> <span style="font-size:11px;color:var(--text3)">${c.admin_building || ''}</span>` : '<span class="badge badge-gray">Non</span>';
+    return `<tr>
       <td><strong>${c.name}</strong></td>
+      <td>${typeLabel}</td>
       <td>${c.city || '—'}</td>
       <td>${c.contact_email || '—'}</td>
+      <td>${adminBadge}</td>
       <td style="color:var(--text3)">${new Date(c.created_at).toLocaleDateString('fr-CA')}</td>
       <td><div class="td-actions">
         <button class="btn btn-secondary btn-sm" onclick="editClientById('${c.id}')">Modifier</button>
       </div></td>
-    </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucun client</td></tr>';
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun client</td></tr>';
 }
 
 function openClientModal(c) {
-  ['client-id','c-name','c-address','c-email','c-contact','c-notes'].forEach(id => {
+  ['client-id','c-name','c-address','c-email','c-contact','c-notes','c-admin-building'].forEach(id => {
     document.getElementById(id).value = '';
   });
   document.getElementById('c-city').value = 'Montréal';
+  document.getElementById('c-type').value = 'owner';
+  document.getElementById('c-is-admin').checked = false;
+  onClientTypeChange();
   document.getElementById('client-modal-title').textContent = 'Nouveau client';
   openModal('modal-client');
 }
@@ -737,11 +775,15 @@ function editClientById(id) {
 function editClient(c) {
   document.getElementById('client-id').value    = c.id;
   document.getElementById('c-name').value       = c.name;
+  document.getElementById('c-type').value       = c.client_type || 'owner';
   document.getElementById('c-address').value    = c.address || '';
   document.getElementById('c-city').value       = c.city || 'Montréal';
   document.getElementById('c-email').value      = c.contact_email || '';
   document.getElementById('c-contact').value    = c.contact_name || '';
   document.getElementById('c-notes').value      = c.notes || '';
+  document.getElementById('c-is-admin').checked = !!c.is_admin;
+  document.getElementById('c-admin-building').value = c.admin_building || '';
+  onClientTypeChange();
   document.getElementById('client-modal-title').textContent = 'Modifier client';
   openModal('modal-client');
 }
@@ -750,11 +792,14 @@ async function saveClient() {
   const id      = document.getElementById('client-id').value;
   const payload = {
     name: document.getElementById('c-name').value.trim(),
+    client_type: document.getElementById('c-type').value,
     address: document.getElementById('c-address').value.trim(),
     city: document.getElementById('c-city').value.trim(),
     contact_email: document.getElementById('c-email').value.trim(),
     contact_name: document.getElementById('c-contact').value.trim(),
     notes: document.getElementById('c-notes').value.trim(),
+    is_admin: document.getElementById('c-is-admin').checked,
+    admin_building: document.getElementById('c-admin-building').value.trim() || null,
     updated_at: new Date().toISOString()
   };
   if (!payload.name) { toast('Nom requis', 'error'); return; }
