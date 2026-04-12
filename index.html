@@ -120,6 +120,7 @@
     <div class="sidebar">
       <div class="nav-item active" onclick="nav('dashboard')">📊 Tableau de bord</div>
       <div class="nav-item" onclick="nav('clients')">🏢 Clients</div>
+      <div class="nav-item" onclick="nav('contracts')">📄 Contrats</div>
       <div class="nav-item" onclick="nav('licences')">🗝 Licences</div>
       <div class="nav-item" onclick="nav('networks')">🔗 Réseaux</div>
       <div class="nav-item" onclick="nav('plans')">📦 Forfaits</div>
@@ -153,7 +154,7 @@
           </div>
           <div style="overflow-x:auto;">
             <table>
-              <thead><tr><th>Nom</th><th>Courriel</th><th>Immeuble</th><th>Inscrit le</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Nom</th><th>Courriel</th><th>Immeuble</th><th>Forfait</th><th>Inscrit le</th><th>Actions</th></tr></thead>
               <tbody id="pending-tbody"></tbody>
             </table>
           </div>
@@ -163,6 +164,33 @@
           <table>
             <thead><tr><th>Nom</th><th>Type</th><th>Actif</th><th>Contact</th><th>Modules</th><th>Actions</th></tr></thead>
             <tbody id="clients-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CONTRATS -->
+      <div id="page-contracts" class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div class="page-title" style="margin:0">Contrats</div>
+          <button class="btn btn-primary btn-sm" onclick="openContractModal()">+ Nouveau contrat</button>
+        </div>
+        <div class="card" style="padding:0">
+          <table>
+            <thead>
+              <tr>
+                <th>Résident / Client</th>
+                <th>Immeuble</th>
+                <th>Type</th>
+                <th>Forfait</th>
+                <th>Début</th>
+                <th>Fin</th>
+                <th>Statut</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="contracts-tbody">
+              <tr><td colspan="8" style="text-align:center;color:var(--text3)">Chargement…</td></tr>
+            </tbody>
           </table>
         </div>
       </div>
@@ -735,6 +763,7 @@ function nav(page) {
   event.target.classList.add('active');
   if (page === 'dashboard') loadDashboard();
   if (page === 'clients')   loadClients();
+  if (page === 'contracts') loadContracts();
   if (page === 'licences')  loadLicences();
   if (page === 'networks')  loadNetworks();
   if (page === 'plans')     loadPlans();
@@ -839,60 +868,273 @@ async function loadClients() {
 }
 
 async function loadPendingRequests() {
-  const card   = document.getElementById('pending-requests-card');
-  const tbody  = document.getElementById('pending-tbody');
+  const card    = document.getElementById('pending-requests-card');
+  const tbody   = document.getElementById('pending-tbody');
   const countEl = document.getElementById('pending-count');
   if(!card || !tbody) return;
 
   try {
-    // Récupérer toutes les licences avec URL Supabase
-    const { data: licences } = await sb.from('licences')
-      .select('id, domain, supabase_url, clients(id, name)')
-      .eq('active', true)
-      .not('supabase_url', 'is', null);
+    const { data: pending } = await sb.from('clients')
+      .select('id, name, contact_email, contact_name, cohabitat_user_id, created_at, clients!owner_client_id(name)')
+      .eq('pending_approval', true)
+      .order('created_at', { ascending: false });
 
-    if(!licences || !licences.length) { card.style.display = 'none'; return; }
-
-    const allPending = [];
-    // Pour chaque licence, lire les profils is_active=false
-    await Promise.all(licences.map(async (lic) => {
-      try {
-        const res = await fetch(lic.supabase_url + '/rest/v1/profiles?is_active=eq.false&select=id,full_name,email,created_at&order=created_at.desc&limit=20', {
-          headers: {
-            'apikey': CENTRAL_KEY,
-            'Authorization': 'Bearer ' + CENTRAL_KEY
-          }
-        });
-        if(!res.ok) return;
-        const profiles = await res.json();
-        (profiles || []).forEach(p => {
-          allPending.push({
-            ...p,
-            building: lic.clients?.name || lic.domain,
-            licence_id: lic.id,
-            supabase_url: lic.supabase_url
-          });
-        });
-      } catch(e) {}
-    }));
-
-    if(!allPending.length) { card.style.display = 'none'; return; }
+    if(!pending || !pending.length) { card.style.display = 'none'; return; }
 
     card.style.display = '';
-    if(countEl) countEl.textContent = allPending.length;
-    tbody.innerHTML = allPending.map(p => `
-      <tr>
-        <td><strong>${p.full_name || '—'}</strong></td>
-        <td style="font-size:12px;color:var(--text2)">${p.email || '—'}</td>
-        <td>${p.building}</td>
+    if(countEl) countEl.textContent = pending.length;
+
+    // Charger les propriétaires pour le select
+    const { data: owners } = await sb.from('clients').select('id, name').eq('client_type', 'owner').eq('is_active', true);
+    const ownerOptions = (owners || []).map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+
+    tbody.innerHTML = pending.map(p => `
+      <tr id="pending-row-${p.id}">
+        <td><strong>${p.name || '—'}</strong></td>
+        <td style="font-size:12px;color:var(--text2)">${p.contact_email || '—'}</td>
+        <td>
+          <select id="pending-owner-${p.id}" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;">
+            <option value="">— Choisir immeuble —</option>
+            ${ownerOptions}
+          </select>
+        </td>
+        <td>
+          <select id="pending-plan-${p.id}" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;">
+            <option value="local">🏠 Local</option>
+            <option value="network">🔗 Réseau</option>
+          </select>
+        </td>
         <td style="font-size:11px;color:var(--text3)">${p.created_at ? new Date(p.created_at).toLocaleDateString('fr-CA') : '—'}</td>
         <td><div class="td-actions">
-          <span class="badge badge-gray" style="font-size:11px;">Approbation via CoHabitat</span>
+          <button class="btn btn-success btn-sm" onclick="approveResident('${p.id}', '${p.cohabitat_user_id || ''}')">✓ Approuver</button>
+          <button class="btn btn-danger btn-sm" onclick="rejectResident('${p.id}')">✗ Rejeter</button>
         </div></td>
       </tr>`).join('');
   } catch(e) {
+    console.error('loadPendingRequests:', e);
     card.style.display = 'none';
   }
+}
+
+async function approveResident(clientId, cohabitatUserId) {
+  const ownerId = document.getElementById('pending-owner-' + clientId)?.value;
+  const plan    = document.getElementById('pending-plan-'  + clientId)?.value || 'local';
+  if(!ownerId) { toast('Choisissez un immeuble', 'error'); return; }
+
+  // 1. Activer le client dans Central
+  const { error } = await sb.from('clients').update({
+    pending_approval: false,
+    is_active: true,
+    owner_client_id: ownerId,
+    client_type: plan === 'network' ? 'network' : 'local',
+    updated_at: new Date().toISOString()
+  }).eq('id', clientId);
+  if(error) { toast('Erreur Central: ' + error.message, 'error'); return; }
+
+  // 2. Créer un contrat
+  await sb.from('contracts').insert({
+    client_id: clientId,
+    owner_client_id: ownerId,
+    type: 'resident',
+    plan: plan,
+    starts_at: new Date().toISOString().slice(0,10),
+    status: 'active',
+    created_by: 'modulimo_admin'
+  });
+
+  // 3. Activer le profil dans CoHabitat Supabase de l'immeuble
+  if(cohabitatUserId) {
+    try {
+      // Trouver l'URL Supabase de l'immeuble via sa licence
+      const { data: lics } = await sb.from('licences')
+        .select('supabase_url, anon_key')
+        .eq('client_id', ownerId)
+        .eq('active', true)
+        .limit(1);
+      const lic = lics?.[0];
+      if(lic?.supabase_url) {
+        const key = lic.anon_key || CENTRAL_KEY;
+        // Activer le profil + mettre le plan
+        const planUntil = new Date();
+        planUntil.setFullYear(planUntil.getFullYear() + 1);
+        await fetch(lic.supabase_url + '/rest/v1/profiles?id=eq.' + cohabitatUserId, {
+          method: 'PATCH',
+          headers: {
+            apikey: key,
+            Authorization: 'Bearer ' + key,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal'
+          },
+          body: JSON.stringify({
+            is_active: true,
+            resident_plan: plan,
+            resident_plan_until: planUntil.toISOString(),
+            status_changed_at: new Date().toISOString()
+          })
+        });
+        console.log('[approveResident] Profil CoHabitat activé pour:', cohabitatUserId);
+      }
+    } catch(e) {
+      console.warn('[approveResident] Erreur activation CoHabitat (non bloquant):', e.message);
+    }
+  }
+
+  toast('Résident approuvé ✓', 'success');
+  loadClients();
+  loadPendingRequests();
+}
+
+async function rejectResident(clientId) {
+  if(!confirm('Supprimer cette demande ?')) return;
+  await sb.from('clients').delete().eq('id', clientId);
+  toast('Demande rejetée', 'success');
+  loadPendingRequests();
+}
+
+// ── CONTRATS ──────────────────────────────────────────────────────────────────
+async function loadContracts() {
+  const tbody = document.getElementById('contracts-tbody');
+  if(!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text3)">Chargement…</td></tr>';
+
+  const { data, error } = await sb.from('contracts')
+    .select('*, clients!client_id(name, contact_email), clients!owner_client_id(name)')
+    .order('created_at', { ascending: false });
+
+  if(error || !data || !data.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucun contrat</td></tr>';
+    return;
+  }
+
+  const statusColors = { active: 'badge-green', pending: 'badge-yellow', terminated: 'badge-red' };
+  const statusLabels = { active: 'Actif', pending: 'En attente', terminated: 'Résilié' };
+  const planLabels   = { local: '🏠 Local', network: '🔗 Réseau' };
+
+  tbody.innerHTML = data.map(c => `
+    <tr>
+      <td><strong>${c.clients?.name || '—'}</strong><br><span style="font-size:11px;color:var(--text3)">${c.clients?.contact_email || ''}</span></td>
+      <td>${c['clients!owner_client_id']?.name || '—'}</td>
+      <td><span class="badge badge-gray">${c.type === 'owner' ? 'Propriétaire' : 'Résident'}</span></td>
+      <td>${planLabels[c.plan] || c.plan || '—'}</td>
+      <td style="font-size:12px">${c.starts_at || '—'}</td>
+      <td style="font-size:12px">${c.ends_at || 'Indéterminé'}</td>
+      <td><span class="badge ${statusColors[c.status] || 'badge-gray'}">${statusLabels[c.status] || c.status}</span></td>
+      <td><div class="td-actions">
+        <button class="btn btn-secondary btn-sm" onclick="editContract('${c.id}')">Modifier</button>
+        ${c.status === 'active' ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}')">Résilier</button>` : ''}
+      </div></td>
+    </tr>`).join('');
+}
+
+async function terminateContract(id) {
+  if(!confirm('Résilier ce contrat ?')) return;
+  const { error } = await sb.from('contracts').update({
+    status: 'terminated',
+    ends_at: new Date().toISOString().slice(0,10)
+  }).eq('id', id);
+  if(error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast('Contrat résilié', 'success');
+  loadContracts();
+}
+
+async function editContract(id) {
+  const { data: c } = await sb.from('contracts').select('*').eq('id', id).single();
+  if(!c) return;
+  // Simple prompt pour l'instant
+  const ends = prompt('Date de fin (AAAA-MM-JJ, vide = indéterminé) :', c.ends_at || '');
+  if(ends === null) return;
+  await sb.from('contracts').update({ ends_at: ends || null }).eq('id', id);
+  toast('Contrat mis à jour', 'success');
+  loadContracts();
+}
+
+async function openContractModal() {
+  // Charger les clients pour les selects
+  const { data: clients } = await sb.from('clients').select('id, name, client_type').eq('is_active', true).order('name');
+  const residents = (clients || []).filter(c => c.client_type !== 'owner');
+  const owners    = (clients || []).filter(c => c.client_type === 'owner');
+
+  const resOpts   = residents.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  const ownOpts   = owners.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+  const html = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;max-width:480px;margin:40px auto;">
+      <h3 style="margin:0 0 20px;color:var(--text)">Nouveau contrat</h3>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Résident / Client</label>
+          <select id="nc-client" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;">
+            <option value="">— Choisir —</option>${resOpts}
+          </select></div>
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Immeuble</label>
+          <select id="nc-owner" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;">
+            <option value="">— Choisir —</option>${ownOpts}
+          </select></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Forfait</label>
+            <select id="nc-plan" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;">
+              <option value="local">🏠 Local</option>
+              <option value="network">🔗 Réseau</option>
+            </select></div>
+          <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Statut</label>
+            <select id="nc-status" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;">
+              <option value="active">Actif</option>
+              <option value="pending">En attente</option>
+            </select></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Date début</label>
+            <input type="date" id="nc-start" value="${new Date().toISOString().slice(0,10)}" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Date fin</label>
+            <input type="date" id="nc-end" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+        </div>
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Notes</label>
+          <textarea id="nc-notes" rows="2" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;resize:vertical;box-sizing:border-box;"></textarea></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+          <button class="btn btn-secondary" onclick="this.closest('[style]').remove()">Annuler</button>
+          <button class="btn btn-primary" onclick="saveNewContract()">Créer le contrat</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Injecter dans la page
+  let overlay = document.getElementById('contract-quick-modal');
+  if(!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'contract-quick-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;';
+    overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = html;
+  overlay.style.display = 'flex';
+}
+
+async function saveNewContract() {
+  const clientId = document.getElementById('nc-client')?.value;
+  const ownerId  = document.getElementById('nc-owner')?.value;
+  const plan     = document.getElementById('nc-plan')?.value || 'local';
+  const status   = document.getElementById('nc-status')?.value || 'active';
+  const start    = document.getElementById('nc-start')?.value;
+  const end      = document.getElementById('nc-end')?.value || null;
+  const notes    = document.getElementById('nc-notes')?.value || null;
+
+  if(!clientId || !ownerId) { toast('Résident et immeuble requis', 'error'); return; }
+
+  const { error } = await sb.from('contracts').insert({
+    client_id: clientId,
+    owner_client_id: ownerId,
+    type: 'resident',
+    plan, status,
+    starts_at: start || new Date().toISOString().slice(0,10),
+    ends_at: end,
+    notes,
+    created_by: 'modulimo_admin'
+  });
+  if(error) { toast('Erreur: ' + error.message, 'error'); return; }
+
+  document.getElementById('contract-quick-modal')?.remove();
+  toast('Contrat créé', 'success');
+  loadContracts();
 }
 
 async function toggleClientActive(id, active) {
