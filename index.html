@@ -818,6 +818,7 @@ async function loadClients() {
       <td>${modStr}</td>
       <td><div class="td-actions">
         <button class="btn btn-secondary btn-sm" onclick="editClientById('${o.id}')">Modifier</button>
+        <button class="btn btn-info btn-sm" onclick="openContractForClient('${o.id}', 'owner')">📄 Contrat</button>
         <button class="btn ${o.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${o.id}', ${!o.is_active})">${o.is_active ? 'Désactiver' : 'Activer'}</button>
       </div></td>
     </tr>`);
@@ -1144,6 +1145,28 @@ async function toggleClientActive(id, active) {
   loadClients();
 }
 
+// Ouvrir le modal de contrat pré-rempli pour un client existant
+async function openContractForClient(clientId, type) {
+  await openContractModal();
+  // Pré-sélectionner le client dans le modal
+  setTimeout(() => {
+    const sel = document.getElementById('nc-client');
+    const ownSel = document.getElementById('nc-owner');
+    if(type === 'owner') {
+      // Pour un propriétaire, client = lui-même, pas de owner
+      if(sel) sel.value = clientId;
+      if(ownSel) { ownSel.disabled = true; ownSel.value = ''; }
+      // Adapter le type dans le formulaire
+      const typeNote = document.createElement('div');
+      typeNote.style.cssText = 'font-size:12px;color:var(--text3);margin-top:-8px;';
+      typeNote.textContent = 'Contrat propriétaire — signé avec Modulimo';
+      ownSel?.parentElement?.appendChild(typeNote);
+    } else {
+      if(sel) sel.value = clientId;
+    }
+  }, 100);
+}
+
 async function openClientModal(c) {
   ['client-id','c-name','c-email','c-contact','c-notes','c-admin-building'].forEach(id => {
     document.getElementById(id).value = '';
@@ -1197,6 +1220,7 @@ async function saveClient() {
   const id   = document.getElementById('client-id').value;
   const type = document.getElementById('c-type').value;
   const ownerId = document.getElementById('c-owner-id').value || null;
+  const isActive = document.getElementById('c-is-active').checked;
   const payload = {
     name:          document.getElementById('c-name').value.trim(),
     client_type:   type,
@@ -1204,7 +1228,7 @@ async function saveClient() {
     contact_email: document.getElementById('c-email').value.trim(),
     contact_name:  document.getElementById('c-contact').value.trim(),
     notes:         document.getElementById('c-notes').value.trim(),
-    is_active:     document.getElementById('c-is-active').checked,
+    is_active:     isActive,
     is_admin:      document.getElementById('c-is-admin').checked,
     admin_building: document.getElementById('c-admin-building').value.trim() || null,
     cohabitat_modules: {
@@ -1215,11 +1239,36 @@ async function saveClient() {
     updated_at: new Date().toISOString()
   };
   if (!payload.name) { toast('Nom requis', 'error'); return; }
-  const { error } = id
-    ? await sb.from('clients').update(payload).eq('id', id)
-    : await sb.from('clients').insert(payload);
-  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
-  toast(id ? 'Client modifié' : 'Client créé', 'success');
+
+  if (id) {
+    // Modification
+    const { error } = await sb.from('clients').update(payload).eq('id', id);
+    if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+    toast('Client modifié', 'success');
+  } else {
+    // Création
+    const { data: newClient, error } = await sb.from('clients').insert(payload).select().single();
+    if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+
+    // Créer un contrat automatiquement si client actif
+    if (isActive && newClient) {
+      const contractPayload = {
+        client_id: newClient.id,
+        owner_client_id: type === 'owner' ? null : ownerId,
+        type: type === 'owner' ? 'owner' : 'resident',
+        plan: type === 'network' ? 'network' : 'local',
+        starts_at: new Date().toISOString().slice(0, 10),
+        status: 'active',
+        created_by: 'modulimo_admin'
+      };
+      const { error: cErr } = await sb.from('contracts').insert(contractPayload);
+      if (cErr) console.warn('Contrat non créé:', cErr.message);
+      else toast('Client créé + contrat généré ✓', 'success');
+    } else {
+      toast('Client créé', 'success');
+    }
+  }
+
   closeModal('modal-client');
   loadClients();
 }
