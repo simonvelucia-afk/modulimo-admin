@@ -146,7 +146,7 @@
         </div>
         <div class="card" style="padding:0">
           <table>
-            <thead><tr><th>Nom</th><th>Type</th><th>Ville</th><th>Contact</th><th>Admin CoHabitat</th><th>Créé le</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Nom</th><th>Type</th><th>Actif</th><th>Contact</th><th>Modules</th><th>Actions</th></tr></thead>
             <tbody id="clients-tbody"></tbody>
           </table>
         </div>
@@ -423,7 +423,7 @@
     <div class="modal-header"><span class="modal-title" id="client-modal-title">Nouveau client</span><button onclick="closeModal('modal-client')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button></div>
     <div class="modal-body">
       <input type="hidden" id="client-id">
-      <div class="form-group"><label>Nom du projet</label><input id="c-name" placeholder="Co-housing Pointe-Est"></div>
+      <div class="form-group"><label>Nom du projet / client</label><input id="c-name" placeholder="Co-housing Pointe-Est"></div>
       <div class="form-group">
         <label>Type de client</label>
         <select id="c-type" onchange="onClientTypeChange()">
@@ -432,11 +432,32 @@
           <option value="network">🔗 Locataire réseau</option>
         </select>
       </div>
-      <div class="form-group"><label>Adresse</label><input id="c-address" placeholder="123 Rue Bureau"></div>
-      <div class="form-group"><label>Ville</label><input id="c-city" value="Montréal"></div>
+      <div class="form-group" id="owner-select-group" style="display:none;">
+        <label>Propriétaire de l'immeuble</label>
+        <select id="c-owner-id"><option value="">— Choisir —</option></select>
+      </div>
       <div class="form-group"><label>Courriel contact</label><input id="c-email" type="email"></div>
       <div class="form-group"><label>Nom contact</label><input id="c-contact"></div>
-      <div id="admin-cohabitat-section" class="form-group" style="border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.02);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);margin-bottom:14px;">
+        <span style="font-size:13px;font-weight:500;">Accès CoHabitat actif</span>
+        <label class="toggle-sw"><input type="checkbox" id="c-is-active"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+      </div>
+      <div class="form-group" style="border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.02);">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:10px;">Modules CoHabitat autorisés</div>
+        <div class="module-toggle">
+          <span style="font-size:13px">🏠 Espaces communs</span>
+          <label class="toggle-sw"><input type="checkbox" id="c-mod-spaces" checked><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+        </div>
+        <div class="module-toggle">
+          <span style="font-size:13px">🚗 Auto-partage</span>
+          <label class="toggle-sw"><input type="checkbox" id="c-mod-trips"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+        </div>
+        <div class="module-toggle" style="border:none">
+          <span style="font-size:13px">🍱 Machine Lunch</span>
+          <label class="toggle-sw"><input type="checkbox" id="c-mod-lunch"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+        </div>
+      </div>
+      <div id="admin-cohabitat-section" class="form-group" style="border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.02);margin-top:14px;">
         <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:10px;">⚙ Admin CoHabitat</div>
         <div class="form-group" style="margin-bottom:10px;"><label>Bâtisse CoHabitat</label><input id="c-admin-building" placeholder="Pointe Est"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -444,7 +465,7 @@
           <label class="toggle-sw"><input type="checkbox" id="c-is-admin"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
         </div>
       </div>
-      <div class="form-group"><label>Notes</label><textarea id="c-notes" rows="3"></textarea></div>
+      <div class="form-group" style="margin-top:14px;"><label>Notes</label><textarea id="c-notes" rows="2"></textarea></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-client')">Annuler</button>
@@ -527,9 +548,9 @@ let licencesCache = [];
 
 function onClientTypeChange() {
   const type = document.getElementById('c-type').value;
-  const section = document.getElementById('admin-cohabitat-section');
-  // La section admin CoHabitat est pertinente pour tous les types mais surtout propriétaire
-  section.style.display = (type === 'local' || type === 'network') ? 'block' : 'block';
+  const isOwner = type === 'owner';
+  document.getElementById('owner-select-group').style.display = isOwner ? 'none' : 'block';
+  document.getElementById('admin-cohabitat-section').style.display = isOwner ? 'block' : 'none';
 }
 
 // PLANS
@@ -735,35 +756,99 @@ async function loadDashboard() {
 
 // CLIENTS
 async function loadClients() {
-  const { data } = await sb.from('clients').select('*').order('name');
+  const { data } = await sb.from('clients').select('*').order('created_at', { ascending: true });
   clientsCache = data || [];
-  document.getElementById('clients-tbody').innerHTML = clientsCache.map(c => {
-    const typeLabel = c.client_type === 'owner' ? '🏢 Propriétaire' : c.client_type === 'local' ? '🏠 Locataire local' : c.client_type === 'network' ? '🔗 Locataire réseau' : '—';
-    const adminBadge = c.is_admin ? `<span class="badge badge-green">Admin</span> <span style="font-size:11px;color:var(--text3)">${c.admin_building || ''}</span>` : '<span class="badge badge-gray">Non</span>';
-    return `<tr>
-      <td><strong>${c.name}</strong></td>
-      <td>${typeLabel}</td>
-      <td>${c.city || '—'}</td>
-      <td>${c.contact_email || '—'}</td>
-      <td>${adminBadge}</td>
-      <td style="color:var(--text3)">${new Date(c.created_at).toLocaleDateString('fr-CA')}</td>
+
+  const owners = clientsCache.filter(c => c.client_type === 'owner');
+  const tenants = clientsCache.filter(c => c.client_type !== 'owner');
+
+  const rows = [];
+  owners.forEach(o => {
+    const mods = o.cohabitat_modules || {};
+    const modStr = [mods.spaces?'🏠':'', mods.trips?'🚗':'', mods.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
+    rows.push(`<tr style="background:rgba(200,169,110,.04)">
+      <td><strong>🏢 ${o.name}</strong>${o.is_admin ? ' <span class="badge badge-yellow" style="font-size:10px;">Admin</span>' : ''}</td>
+      <td><span class="badge badge-gray">Propriétaire</span></td>
+      <td><span class="badge ${o.is_active ? 'badge-green' : 'badge-red'}">${o.is_active ? 'Actif' : 'Inactif'}</span></td>
+      <td style="font-size:12px">${o.contact_email || '—'}</td>
+      <td>${modStr}</td>
       <td><div class="td-actions">
-        <button class="btn btn-secondary btn-sm" onclick="editClientById('${c.id}')">Modifier</button>
+        <button class="btn btn-secondary btn-sm" onclick="editClientById('${o.id}')">Modifier</button>
+        <button class="btn ${o.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${o.id}', ${!o.is_active})">${o.is_active ? 'Désactiver' : 'Activer'}</button>
       </div></td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun client</td></tr>';
+    </tr>`);
+    // Locataires de ce propriétaire
+    const children = tenants.filter(t => t.owner_client_id === o.id);
+    children.forEach(t => {
+      const typeLabel = t.client_type === 'local' ? '🏠 Local' : '🔗 Réseau';
+      const mods2 = t.cohabitat_modules || {};
+      const modStr2 = [mods2.spaces?'🏠':'', mods2.trips?'🚗':'', mods2.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
+      rows.push(`<tr>
+        <td style="padding-left:32px;color:var(--text2)">↳ ${t.name}</td>
+        <td><span class="badge badge-gray">${typeLabel}</span></td>
+        <td><span class="badge ${t.is_active ? 'badge-green' : 'badge-red'}">${t.is_active ? 'Actif' : 'Inactif'}</span></td>
+        <td style="font-size:12px">${t.contact_email || '—'}</td>
+        <td>${modStr2}</td>
+        <td><div class="td-actions">
+          <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
+          <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
+        </div></td>
+      </tr>`);
+    });
+  });
+  // Locataires sans propriétaire assigné
+  const orphans = tenants.filter(t => !t.owner_client_id);
+  if (orphans.length) {
+    rows.push(`<tr><td colspan="6" style="padding:8px 12px;font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.08em;">Sans propriétaire assigné</td></tr>`);
+    orphans.forEach(t => {
+      const typeLabel = t.client_type === 'local' ? '🏠 Local' : '🔗 Réseau';
+      const mods2 = t.cohabitat_modules || {};
+      const modStr2 = [mods2.spaces?'🏠':'', mods2.trips?'🚗':'', mods2.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
+      rows.push(`<tr>
+        <td style="color:var(--text2)">${t.name}</td>
+        <td><span class="badge badge-gray">${typeLabel}</span></td>
+        <td><span class="badge ${t.is_active ? 'badge-green' : 'badge-red'}">${t.is_active ? 'Actif' : 'Inactif'}</span></td>
+        <td style="font-size:12px">${t.contact_email || '—'}</td>
+        <td>${modStr2}</td>
+        <td><div class="td-actions">
+          <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
+          <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
+        </div></td>
+      </tr>`);
+    });
+  }
+
+  document.getElementById('clients-tbody').innerHTML = rows.join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text3)">Aucun client</td></tr>';
 }
 
-function openClientModal(c) {
-  ['client-id','c-name','c-address','c-email','c-contact','c-notes','c-admin-building'].forEach(id => {
+async function toggleClientActive(id, active) {
+  const { error } = await sb.from('clients').update({ is_active: active, updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast(active ? 'Client activé' : 'Client désactivé', 'success');
+  loadClients();
+}
+
+async function openClientModal(c) {
+  ['client-id','c-name','c-email','c-contact','c-notes','c-admin-building'].forEach(id => {
     document.getElementById(id).value = '';
   });
-  document.getElementById('c-city').value = 'Montréal';
   document.getElementById('c-type').value = 'owner';
+  document.getElementById('c-is-active').checked = false;
   document.getElementById('c-is-admin').checked = false;
+  document.getElementById('c-mod-spaces').checked = true;
+  document.getElementById('c-mod-trips').checked = false;
+  document.getElementById('c-mod-lunch').checked = false;
+  await populateOwnerSelect();
   onClientTypeChange();
   document.getElementById('client-modal-title').textContent = 'Nouveau client';
   openModal('modal-client');
+}
+
+async function populateOwnerSelect(selectedId) {
+  const owners = clientsCache.filter(c => c.client_type === 'owner');
+  const sel = document.getElementById('c-owner-id');
+  sel.innerHTML = '<option value="">— Choisir —</option>' +
+    owners.map(o => `<option value="${o.id}" ${o.id === selectedId ? 'selected' : ''}>${o.name}</option>`).join('');
 }
 
 function editClientById(id) {
@@ -772,34 +857,45 @@ function editClientById(id) {
   editClient(c);
 }
 
-function editClient(c) {
+async function editClient(c) {
   document.getElementById('client-id').value    = c.id;
   document.getElementById('c-name').value       = c.name;
   document.getElementById('c-type').value       = c.client_type || 'owner';
-  document.getElementById('c-address').value    = c.address || '';
-  document.getElementById('c-city').value       = c.city || 'Montréal';
   document.getElementById('c-email').value      = c.contact_email || '';
   document.getElementById('c-contact').value    = c.contact_name || '';
   document.getElementById('c-notes').value      = c.notes || '';
-  document.getElementById('c-is-admin').checked = !!c.is_admin;
+  document.getElementById('c-is-active').checked = !!c.is_active;
+  document.getElementById('c-is-admin').checked  = !!c.is_admin;
   document.getElementById('c-admin-building').value = c.admin_building || '';
+  const mods = c.cohabitat_modules || {};
+  document.getElementById('c-mod-spaces').checked = mods.spaces !== false;
+  document.getElementById('c-mod-trips').checked  = !!mods.trips;
+  document.getElementById('c-mod-lunch').checked  = !!mods.lunch;
+  await populateOwnerSelect(c.owner_client_id);
   onClientTypeChange();
   document.getElementById('client-modal-title').textContent = 'Modifier client';
   openModal('modal-client');
 }
 
 async function saveClient() {
-  const id      = document.getElementById('client-id').value;
+  const id   = document.getElementById('client-id').value;
+  const type = document.getElementById('c-type').value;
+  const ownerId = document.getElementById('c-owner-id').value || null;
   const payload = {
-    name: document.getElementById('c-name').value.trim(),
-    client_type: document.getElementById('c-type').value,
-    address: document.getElementById('c-address').value.trim(),
-    city: document.getElementById('c-city').value.trim(),
+    name:          document.getElementById('c-name').value.trim(),
+    client_type:   type,
+    owner_client_id: type !== 'owner' ? ownerId : null,
     contact_email: document.getElementById('c-email').value.trim(),
-    contact_name: document.getElementById('c-contact').value.trim(),
-    notes: document.getElementById('c-notes').value.trim(),
-    is_admin: document.getElementById('c-is-admin').checked,
+    contact_name:  document.getElementById('c-contact').value.trim(),
+    notes:         document.getElementById('c-notes').value.trim(),
+    is_active:     document.getElementById('c-is-active').checked,
+    is_admin:      document.getElementById('c-is-admin').checked,
     admin_building: document.getElementById('c-admin-building').value.trim() || null,
+    cohabitat_modules: {
+      spaces: document.getElementById('c-mod-spaces').checked,
+      trips:  document.getElementById('c-mod-trips').checked,
+      lunch:  document.getElementById('c-mod-lunch').checked
+    },
     updated_at: new Date().toISOString()
   };
   if (!payload.name) { toast('Nom requis', 'error'); return; }
