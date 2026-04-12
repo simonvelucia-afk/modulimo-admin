@@ -144,6 +144,21 @@
           <div class="page-title" style="margin:0">Clients</div>
           <button class="btn btn-primary btn-sm" onclick="openClientModal()">+ Nouveau client</button>
         </div>
+
+        <!-- Demandes d'accès en attente -->
+        <div id="pending-requests-card" class="card" style="margin-bottom:20px;display:none;">
+          <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;">
+            <span>⏳ Demandes d'accès en attente <span id="pending-count" style="background:var(--accent3);color:#fff;border-radius:99px;font-size:11px;padding:1px 7px;margin-left:6px;"></span></span>
+            <button class="btn btn-secondary btn-sm" onclick="loadPendingRequests()">↻ Rafraîchir</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table>
+              <thead><tr><th>Nom</th><th>Courriel</th><th>Immeuble</th><th>Inscrit le</th><th>Actions</th></tr></thead>
+              <tbody id="pending-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="card" style="padding:0">
           <table>
             <thead><tr><th>Nom</th><th>Type</th><th>Actif</th><th>Contact</th><th>Modules</th><th>Actions</th></tr></thead>
@@ -819,6 +834,65 @@ async function loadClients() {
   }
 
   document.getElementById('clients-tbody').innerHTML = rows.join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text3)">Aucun client</td></tr>';
+  // Charger les demandes en parallèle
+  loadPendingRequests();
+}
+
+async function loadPendingRequests() {
+  const card   = document.getElementById('pending-requests-card');
+  const tbody  = document.getElementById('pending-tbody');
+  const countEl = document.getElementById('pending-count');
+  if(!card || !tbody) return;
+
+  try {
+    // Récupérer toutes les licences avec URL Supabase
+    const { data: licences } = await sb.from('licences')
+      .select('id, domain, supabase_url, clients(id, name)')
+      .eq('active', true)
+      .not('supabase_url', 'is', null);
+
+    if(!licences || !licences.length) { card.style.display = 'none'; return; }
+
+    const allPending = [];
+    // Pour chaque licence, lire les profils is_active=false
+    await Promise.all(licences.map(async (lic) => {
+      try {
+        const res = await fetch(lic.supabase_url + '/rest/v1/profiles?is_active=eq.false&select=id,full_name,email,created_at&order=created_at.desc&limit=20', {
+          headers: {
+            'apikey': CENTRAL_KEY,
+            'Authorization': 'Bearer ' + CENTRAL_KEY
+          }
+        });
+        if(!res.ok) return;
+        const profiles = await res.json();
+        (profiles || []).forEach(p => {
+          allPending.push({
+            ...p,
+            building: lic.clients?.name || lic.domain,
+            licence_id: lic.id,
+            supabase_url: lic.supabase_url
+          });
+        });
+      } catch(e) {}
+    }));
+
+    if(!allPending.length) { card.style.display = 'none'; return; }
+
+    card.style.display = '';
+    if(countEl) countEl.textContent = allPending.length;
+    tbody.innerHTML = allPending.map(p => `
+      <tr>
+        <td><strong>${p.full_name || '—'}</strong></td>
+        <td style="font-size:12px;color:var(--text2)">${p.email || '—'}</td>
+        <td>${p.building}</td>
+        <td style="font-size:11px;color:var(--text3)">${p.created_at ? new Date(p.created_at).toLocaleDateString('fr-CA') : '—'}</td>
+        <td><div class="td-actions">
+          <span class="badge badge-gray" style="font-size:11px;">Approbation via CoHabitat</span>
+        </div></td>
+      </tr>`).join('');
+  } catch(e) {
+    card.style.display = 'none';
+  }
 }
 
 async function toggleClientActive(id, active) {
