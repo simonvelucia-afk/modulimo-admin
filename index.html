@@ -770,7 +770,7 @@ async function loadClients() {
       <td><strong>🏢 ${o.name}</strong>${o.is_admin ? ' <span class="badge badge-yellow" style="font-size:10px;">Admin</span>' : ''}</td>
       <td><span class="badge badge-gray">Propriétaire</span></td>
       <td><span class="badge ${o.is_active ? 'badge-green' : 'badge-red'}">${o.is_active ? 'Actif' : 'Inactif'}</span></td>
-      <td style="font-size:12px">${o.contact_email || '—'}</td>
+      <td style="font-size:12px">${o.contact_name ? '<strong>' + o.contact_name + '</strong><br>' : ''}${o.contact_email || '—'}</td>
       <td>${modStr}</td>
       <td><div class="td-actions">
         <button class="btn btn-secondary btn-sm" onclick="editClientById('${o.id}')">Modifier</button>
@@ -787,7 +787,7 @@ async function loadClients() {
         <td style="padding-left:32px;color:var(--text2)">↳ ${t.name}</td>
         <td><span class="badge badge-gray">${typeLabel}</span></td>
         <td><span class="badge ${t.is_active ? 'badge-green' : 'badge-red'}">${t.is_active ? 'Actif' : 'Inactif'}</span></td>
-        <td style="font-size:12px">${t.contact_email || '—'}</td>
+        <td style="font-size:12px">${t.contact_name ? '<strong>' + t.contact_name + '</strong><br>' : ''}${t.contact_email || '—'}</td>
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
@@ -808,7 +808,7 @@ async function loadClients() {
         <td style="color:var(--text2)">${t.name}</td>
         <td><span class="badge badge-gray">${typeLabel}</span></td>
         <td><span class="badge ${t.is_active ? 'badge-green' : 'badge-red'}">${t.is_active ? 'Actif' : 'Inactif'}</span></td>
-        <td style="font-size:12px">${t.contact_email || '—'}</td>
+        <td style="font-size:12px">${t.contact_name ? '<strong>' + t.contact_name + '</strong><br>' : ''}${t.contact_email || '—'}</td>
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
