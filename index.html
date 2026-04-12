@@ -835,6 +835,7 @@ async function loadClients() {
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
+          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}')">📄 Contrat</button>
           <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
         </div></td>
       </tr>`);
@@ -856,6 +857,7 @@ async function loadClients() {
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
+          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}')">📄 Contrat</button>
           <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
         </div></td>
       </tr>`);
@@ -1379,6 +1381,87 @@ async function saveNewContract() {
   document.getElementById('contract-quick-modal')?.remove();
   toast('Contrat créé', 'success');
   loadContracts();
+}
+
+async function showClientContracts(clientId, clientName) {
+  // Créer ou réutiliser overlay
+  let overlay = document.getElementById('client-contracts-modal');
+  if(!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'client-contracts-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;display:flex;align-items:center;justify-content:center;';
+    overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px;max-width:700px;width:92%;max-height:80vh;overflow-y:auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div>
+        <h3 style="margin:0 0 4px;color:var(--text);">📄 Contrats — ${clientName}</h3>
+        <p style="margin:0;font-size:12px;color:var(--text3);">Historique et statut des contrats</p>
+      </div>
+      <button onclick="document.getElementById('client-contracts-modal').remove()" style="background:none;border:none;color:var(--text3);font-size:1.4rem;cursor:pointer;padding:4px 8px;">×</button>
+    </div>
+    <div id="ccm-content" style="color:var(--text3);text-align:center;padding:20px;">Chargement…</div>
+    <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-primary btn-sm" onclick="openContractForClient('${clientId}', 'resident')">+ Nouveau contrat</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('client-contracts-modal').remove()">Fermer</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+
+  // Charger les contrats
+  const { data: contracts } = await sb.from('contracts')
+    .select('id, type, plan, status, starts_at, ends_at, signed_at, signed_by_name, created_at')
+    .eq('client_id', clientId)
+    .order('created_at', { ascending: false });
+
+  const ccm = document.getElementById('ccm-content');
+  if(!ccm) return;
+
+  if(!contracts || !contracts.length) {
+    ccm.innerHTML = '<p style="color:var(--text3);font-style:italic;">Aucun contrat pour ce client.</p>';
+    return;
+  }
+
+  const statusColors = { active:'badge-green', pending:'badge-yellow', terminated:'badge-red', suspended:'badge-gray' };
+  const statusLabels = { active:'Actif', pending:'En attente', terminated:'Résilié', suspended:'Suspendu' };
+  const planLabels   = { local:'🏠 Local', network:'🔗 Réseau', owner:'🏢 Propriétaire' };
+
+  ccm.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+    <thead><tr style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">
+      <th style="text-align:left;padding:8px 10px;">Type</th>
+      <th style="text-align:left;padding:8px 10px;">Forfait</th>
+      <th style="text-align:left;padding:8px 10px;">Début</th>
+      <th style="text-align:left;padding:8px 10px;">Fin</th>
+      <th style="text-align:left;padding:8px 10px;">Statut</th>
+      <th style="text-align:left;padding:8px 10px;">Signé</th>
+      <th style="text-align:left;padding:8px 10px;">Actions</th>
+    </tr></thead>
+    <tbody>
+    ${contracts.map(c => {
+      const signedBadge = c.signed_at
+        ? `<span class="badge badge-green" style="font-size:10px;" title="${c.signed_by_name||''}">✓ ${new Date(c.signed_at).toLocaleDateString('fr-CA')}</span>`
+        : `<span class="badge badge-gray" style="font-size:10px;">Non signé</span>`;
+      const canSuspend    = c.status === 'active';
+      const canReactivate = c.status === 'suspended';
+      const canTerminate  = c.status === 'active' || c.status === 'suspended';
+      return `<tr style="border-top:1px solid var(--border);${c.status==='terminated'?'opacity:.5':''}">
+        <td style="padding:10px;font-size:12px;">${c.type === 'owner' ? '🏢 Proprio' : '👤 Résident'}</td>
+        <td style="padding:10px;font-size:12px;">${planLabels[c.plan] || c.plan || '—'}</td>
+        <td style="padding:10px;font-size:12px;">${c.starts_at || '—'}</td>
+        <td style="padding:10px;font-size:12px;">${c.ends_at || '∞'}</td>
+        <td style="padding:10px;"><span class="badge ${statusColors[c.status]||'badge-gray'}">${statusLabels[c.status]||c.status}</span></td>
+        <td style="padding:10px;">${signedBadge}</td>
+        <td style="padding:10px;"><div class="td-actions">
+          ${canSuspend    ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}').then(()=>showClientContracts('${clientId}','${clientName}'))">⏸</button>` : ''}
+          ${canReactivate ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}').then(()=>showClientContracts('${clientId}','${clientName}'))">▶</button>` : ''}
+          ${canTerminate  ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}').then(()=>showClientContracts('${clientId}','${clientName}'))">✕</button>` : ''}
+        </div></td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
 }
 
 async function toggleClientActive(id, active) {
