@@ -836,7 +836,6 @@ async function loadClients() {
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
-          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}', 'resident')">📄 Contrat</button>
           <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
         </div></td>
       </tr>`);
@@ -858,7 +857,6 @@ async function loadClients() {
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
-          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}', 'resident')">📄 Contrat</button>
           <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
         </div></td>
       </tr>`);
@@ -1462,10 +1460,7 @@ async function showClientContracts(clientId, clientName, clientType) {
             style="padding:10px 20px;border:none;border-bottom:2px solid transparent;background:none;color:var(--text3);cursor:pointer;font-family:var(--font-sans,system-ui);font-size:13px;">
             📋 Conditions
           </button>
-          <button id="ccm-tab-signature" onclick="ccmShowTab('signature')"
-            style="padding:10px 20px;border:none;border-bottom:2px solid transparent;background:none;color:var(--text3);cursor:pointer;font-family:var(--font-sans,system-ui);font-size:13px;">
-            ✍️ Signature
-          </button>
+
         </div>
       </div>
 
@@ -1493,10 +1488,7 @@ async function showClientContracts(clientId, clientName, clientType) {
             </div>`).join('')}
         </div>
 
-        <!-- Onglet Signature -->
-        <div id="ccm-panel-signature" style="padding:24px 28px;display:none;">
-          <div id="ccm-signature-area">Chargement…</div>
-        </div>
+
 
       </div>
     </div>`;
@@ -1506,11 +1498,10 @@ async function showClientContracts(clientId, clientName, clientType) {
   // Charger les contrats
   await ccmLoadContracts(clientId, clientName, clientType);
   // Charger la zone de signature
-  await ccmLoadSignature(clientId, clientName, clientType);
 }
 
 function ccmShowTab(tab) {
-  ['contracts','conditions','signature'].forEach(t => {
+  ['contracts','conditions'].forEach(t => {
     const btn   = document.getElementById('ccm-tab-' + t);
     const panel = document.getElementById('ccm-panel-' + t);
     const active = t === tab;
@@ -1673,7 +1664,15 @@ async function toggleClientActive(id, active) {
 // Ouvrir le modal de contrat pré-rempli pour un client existant
 async function openContractForClient(clientId, type) {
   if(type === 'owner') {
-    // Contrat propriétaire : modal simplifié
+    // Si le proprio a déjà un contrat, ouvrir la page complète à 3 onglets
+    const { data: existing } = await sb.from('contracts')
+      .select('id').eq('client_id', clientId).eq('type', 'owner').limit(1);
+    if(existing && existing.length) {
+      const c = clientsCache.find(x => x.id === clientId);
+      showClientContracts(clientId, c?.name || clientId, 'owner');
+      return;
+    }
+    // Sinon créer un nouveau contrat
     const c = clientsCache.find(x => x.id === clientId);
     let overlay = document.getElementById('contract-quick-modal');
     if(!overlay) {
@@ -1755,6 +1754,10 @@ async function saveOwnerContract(clientId) {
       });
     }
   }
+
+  // Ouvrir la page 3 onglets pour signature
+  const c2 = clientsCache.find(x => x.id === clientId);
+  showClientContracts(clientId, c2?.name || clientId, 'owner');
   loadContracts();
 }
 
