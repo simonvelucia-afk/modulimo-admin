@@ -183,6 +183,7 @@
                 <th>Début</th>
                 <th>Fin</th>
                 <th>Statut</th>
+                <th>Signé</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -888,6 +889,10 @@ async function sendContractEmail(to, name, type, details) {
           <tr><td style="padding:6px 0;color:#9a9890;">Début</td><td style="padding:6px 0;">${details.starts_at || 'Aujourd\'hui'}</td></tr>
           ${details.ends_at ? `<tr><td style="padding:6px 0;color:#9a9890;">Fin</td><td style="padding:6px 0;">${details.ends_at}</td></tr>` : ''}
         </table>
+        <div style="background:#1a2a1a;border:1px solid #2a4a2a;border-radius:8px;padding:16px;margin-bottom:20px;">
+          <p style="margin:0 0 8px;font-weight:700;color:#5de88c;">📋 Action requise — Signature du contrat</p>
+          <p style="margin:0;font-size:13px;color:#9a9890;">Connectez-vous à CoHabitat et accédez à <strong style="color:#e8e6df;">Mon contrat</strong> pour lire et signer votre contrat de services.</p>
+        </div>
         <a href="https://cohabitat.modulimo.com" style="display:inline-block;background:#c8a96e;color:#0f0f0f;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;">Accéder à CoHabitat →</a>
         <p style="margin-top:24px;font-size:12px;color:#5a5856;">Modulimo — cohabitat.modulimo.com</p>
       </div>`,
@@ -1087,7 +1092,7 @@ async function loadContracts() {
   tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Chargement…</td></tr>';
 
   const { data, error } = await sb.from('contracts')
-    .select('*, client:clients!client_id(id, name, contact_email), owner:clients!owner_client_id(id, name)')
+    .select('id, type, plan, status, starts_at, ends_at, client_id, owner_client_id, created_at, signed_at, signed_by_name')
     .order('owner_client_id', { ascending: true })
     .order('created_at', { ascending: false });
 
@@ -1096,52 +1101,72 @@ async function loadContracts() {
     return;
   }
 
-  const statusColors = { active: 'badge-green', pending: 'badge-yellow', terminated: 'badge-red' };
-  const statusLabels = { active: 'Actif', pending: 'En attente', terminated: 'Résilié' };
+  // Charger tous les clients en une requête
+  const allClientIds = [...new Set([
+    ...data.map(c => c.client_id).filter(Boolean),
+    ...data.map(c => c.owner_client_id).filter(Boolean)
+  ])];
+  const { data: allClients } = await sb.from('clients')
+    .select('id, name, contact_email, contact_name')
+    .in('id', allClientIds);
+  const clientMap = {};
+  (allClients || []).forEach(c => { clientMap[c.id] = c; });
+
+  const statusColors = { active: 'badge-green', pending: 'badge-yellow', terminated: 'badge-red', suspended: 'badge-gray' };
+  const statusLabels = { active: 'Actif', pending: 'En attente', terminated: 'Résilié', suspended: 'Suspendu' };
   const planLabels   = { local: '🏠 Local', network: '🔗 Réseau', owner: '🏢 Propriétaire', starter: 'Starter', pro: 'Pro', enterprise: 'Enterprise' };
 
   // Grouper par immeuble (owner)
   const ownerContracts  = data.filter(c => c.type === 'owner');
   const tenantContracts = data.filter(c => c.type !== 'owner');
 
-  // Construire un map owner_id → contrats résidents
   const byOwner = {};
   ownerContracts.forEach(c => { byOwner[c.client_id] = { ownerContract: c, residents: [] }; });
   tenantContracts.forEach(c => {
-    const ownId = c.owner?.id;
+    const ownId = c.owner_client_id;
     if(!byOwner[ownId]) byOwner[ownId] = { ownerContract: null, residents: [] };
     byOwner[ownId].residents.push(c);
   });
-  // Résidents sans propriétaire
-  const noOwner = tenantContracts.filter(c => !c.owner?.id);
+  const noOwner = tenantContracts.filter(c => !c.owner_client_id);
 
   const rows = [];
   Object.entries(byOwner).forEach(([ownId, group]) => {
-    const ownerName = group.ownerContract?.client?.name || group.residents[0]?.owner?.name || '—';
+    const ownerClient = clientMap[ownId] || {};
+    const ownerName   = ownerClient.name || '—';
 
-    // Ligne section immeuble
     rows.push(`<tr style="background:rgba(200,169,110,.06);">
       <td colspan="7" style="padding:10px 14px;">
         <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);">🏢 ${ownerName}</span>
         ${group.ownerContract
           ? `<span class="badge ${statusColors[group.ownerContract.status] || 'badge-gray'}" style="margin-left:10px;font-size:10px;">Contrat proprio: ${statusLabels[group.ownerContract.status] || group.ownerContract.status}</span>
-             <span style="font-size:11px;color:var(--text3);margin-left:8px;">${group.ownerContract.starts_at || ''} → ${group.ownerContract.ends_at || '∞'}
-             <button class="btn btn-secondary btn-sm" style="margin-left:8px;font-size:10px;" onclick="terminateContract('${group.ownerContract.id}')">Résilier</button></span>`
+             <span style="font-size:11px;color:var(--text3);margin-left:8px;">${group.ownerContract.starts_at || ''} → ${group.ownerContract.ends_at || '∞'}</span>
+             <button class="btn btn-danger btn-sm" style="margin-left:8px;font-size:10px;" onclick="terminateContract('${group.ownerContract.id}')">Résilier</button>`
           : `<button class="btn btn-primary btn-sm" style="margin-left:10px;font-size:10px;" onclick="openContractForClient('${ownId}', 'owner')">+ Contrat proprio</button>`}
       </td>
     </tr>`);
 
-    // Lignes résidents
     group.residents.forEach(c => {
-      rows.push(`<tr>
-        <td style="padding-left:28px;"><strong>${c.client?.name || '—'}</strong><br><span style="font-size:11px;color:var(--text3)">${c.client?.contact_email || ''}</span></td>
+      const resClient = clientMap[c.client_id] || {};
+      const resName   = resClient.contact_name || resClient.name || '—';
+      const resEmail  = resClient.contact_email || '';
+      const signedBadge = c.signed_at
+        ? `<span class="badge badge-green" style="font-size:10px;" title="Signé le ${new Date(c.signed_at).toLocaleDateString('fr-CA')} par ${c.signed_by_name||''}">✓ ${new Date(c.signed_at).toLocaleDateString('fr-CA')}</span>`
+        : `<span class="badge badge-gray" style="font-size:10px;">Non signé</span>`;
+      const canTerminate = c.status === 'active' || c.status === 'suspended';
+      const canSuspend   = c.status === 'active';
+      const canReactivate = c.status === 'suspended';
+      rows.push(`<tr style="${c.status === 'terminated' ? 'opacity:.5' : c.status === 'suspended' ? 'opacity:.7' : ''}">
+        <td style="padding-left:28px;"><strong>${resName}</strong><br><span style="font-size:11px;color:var(--text3)">${resEmail}</span></td>
         <td>${planLabels[c.plan] || c.plan || '—'}</td>
         <td style="font-size:12px">${c.starts_at || '—'}</td>
         <td style="font-size:12px">${c.ends_at || '∞'}</td>
         <td><span class="badge ${statusColors[c.status] || 'badge-gray'}">${statusLabels[c.status] || c.status}</span></td>
+        <td>${signedBadge}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editContract('${c.id}')">Modifier</button>
-          ${c.status === 'active' ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}')">Résilier</button>` : ''}
+          ${canSuspend    ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}')">⏸ Suspendre</button>` : ''}
+          ${canReactivate ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}')">▶ Réactiver</button>` : ''}
+          ${canTerminate  ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}')">Résilier</button>` : ''}
         </div></td>
       </tr>`);
     });
@@ -1151,23 +1176,45 @@ async function loadContracts() {
   });
 
   if(noOwner.length) {
-    rows.push(`<tr style="background:rgba(224,112,96,.06);"><td colspan="7" style="padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent3);">⚠ Sans immeuble assigné</td></tr>`);
+    rows.push(`<tr style="background:rgba(224,112,96,.06);"><td colspan="8" style="padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent3);">⚠ Sans immeuble assigné</td></tr>`);
     noOwner.forEach(c => {
+      const resClient = clientMap[c.client_id] || {};
+      const signedBadge = c.signed_at
+        ? `<span class="badge badge-green" style="font-size:10px;">✓ ${new Date(c.signed_at).toLocaleDateString('fr-CA')}</span>`
+        : `<span class="badge badge-gray" style="font-size:10px;">Non signé</span>`;
       rows.push(`<tr>
-        <td><strong>${c.client?.name || '—'}</strong></td>
+        <td><strong>${resClient.contact_name || resClient.name || '—'}</strong></td>
         <td>${planLabels[c.plan] || c.plan || '—'}</td>
         <td style="font-size:12px">${c.starts_at || '—'}</td>
         <td style="font-size:12px">${c.ends_at || '∞'}</td>
         <td><span class="badge ${statusColors[c.status] || 'badge-gray'}">${statusLabels[c.status] || c.status}</span></td>
+        <td>${signedBadge}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editContract('${c.id}')">Modifier</button>
-          ${c.status === 'active' ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}')">Résilier</button>` : ''}
+          ${c.status === 'active' ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}')">⏸ Suspendre</button>` : ''}
+          ${c.status === 'suspended' ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}')">▶ Réactiver</button>` : ''}
+          ${(c.status === 'active'||c.status === 'suspended') ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}')">Résilier</button>` : ''}
         </div></td>
       </tr>`);
     });
   }
 
   tbody.innerHTML = rows.join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun contrat</td></tr>';
+}
+
+async function suspendContract(id) {
+  if(!confirm('Suspendre ce contrat ? Le résident ne pourra plus se connecter.')) return;
+  const { error } = await sb.from('contracts').update({ status: 'suspended' }).eq('id', id);
+  if(error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast('Contrat suspendu ⏸', 'success');
+  loadContracts();
+}
+
+async function reactivateContract(id) {
+  const { error } = await sb.from('contracts').update({ status: 'active' }).eq('id', id);
+  if(error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast('Contrat réactivé ✓', 'success');
+  loadContracts();
 }
 
 async function terminateContract(id) {
@@ -1186,7 +1233,7 @@ async function terminateContract(id) {
   if(c?.type === 'owner') {
     // Récupérer les résidents pour leur envoyer un email
     const { data: resContracts } = await sb.from('contracts')
-      .select('client:clients!client_id(name,contact_email,contact_name)')
+      .select('client_id')
       .eq('owner_client_id', c.client_id).eq('status','active');
 
     const { error: cascErr } = await sb.from('contracts').update({
@@ -1203,25 +1250,30 @@ async function terminateContract(id) {
       });
     }
     // Email à chaque résident
-    (resContracts || []).forEach(rc => {
-      const res = rc.client;
-      if(res?.contact_email) {
-        sendContractEmail(res.contact_email, res.contact_name || res.name, 'terminated', {
-          building: ownerClient?.name || ''
-        });
-      }
-    });
+    if(resContracts?.length) {
+      const resIds = resContracts.map(r => r.client_id).filter(Boolean);
+      const { data: resClients } = await sb.from('clients')
+        .select('name,contact_email,contact_name').in('id', resIds);
+      (resClients || []).forEach(res => {
+        if(res?.contact_email) {
+          sendContractEmail(res.contact_email, res.contact_name || res.name, 'terminated', {
+            building: ownerClient?.name || ''
+          });
+        }
+      });
+    }
 
     if(!cascErr) toast('Contrat propriétaire résilié — tous les contrats résidents ont été résiliés ⚠', 'success');
   } else {
     // Email au résident
-    const { data: resClient } = await sb.from('contracts')
-      .select('client:clients!client_id(name,contact_email,contact_name), owner:clients!owner_client_id(name)')
-      .eq('id', id).single();
-    const res = resClient?.client;
-    if(res?.contact_email) {
-      sendContractEmail(res.contact_email, res.contact_name || res.name, 'terminated', {
-        building: resClient?.owner?.name || ''
+    const { data: resClient } = await sb.from('clients')
+      .select('name,contact_email,contact_name').eq('id', c.client_id).single();
+    const { data: ownerClient } = c.owner_client_id
+      ? (await sb.from('clients').select('name').eq('id', c.owner_client_id).single())
+      : { data: null };
+    if(resClient?.contact_email) {
+      sendContractEmail(resClient.contact_email, resClient.contact_name || resClient.name, 'terminated', {
+        building: ownerClient?.name || ''
       });
     }
     toast('Contrat résilié', 'success');
