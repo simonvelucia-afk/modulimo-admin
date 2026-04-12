@@ -746,6 +746,7 @@ async function doLogin() {
   document.getElementById('login-page').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   document.getElementById('admin-email').textContent = currentAdmin.email;
+  await loadAppConfig();
   loadDashboard();
 }
 
@@ -869,8 +870,19 @@ async function loadClients() {
   loadPendingRequests();
 }
 
-const RESEND_KEY = 're_5tFYU15S_4J5HtE2uG7pT6RfCNeARdEsC';
+let RESEND_KEY = '';
 const RESEND_FROM = 'Modulimo <no-reply@modulimo.com>';
+
+async function loadAppConfig() {
+  try {
+    const { data } = await sb.from('app_config').select('key, value');
+    (data || []).forEach(row => {
+      if(row.key === 'resend_key') RESEND_KEY = row.value;
+    });
+  } catch(e) {
+    console.warn('[config] Erreur chargement config:', e.message);
+  }
+}
 
 async function sendContractEmail(to, name, type, details) {
   if(!to) return;
@@ -2285,6 +2297,7 @@ function toast(msg, type = 'success') {
     document.getElementById('login-page').style.display = 'none';
     document.getElementById('app').style.display = 'block';
     document.getElementById('admin-email').textContent = currentAdmin.email;
+    await loadAppConfig();
     loadDashboard();
   }
 })();
