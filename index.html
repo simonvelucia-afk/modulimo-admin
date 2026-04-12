@@ -835,7 +835,7 @@ async function loadClients() {
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
-          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}')">📄 Contrat</button>
+          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}', 'resident')">📄 Contrat</button>
           <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
         </div></td>
       </tr>`);
@@ -857,7 +857,7 @@ async function loadClients() {
         <td>${modStr2}</td>
         <td><div class="td-actions">
           <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
-          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}')">📄 Contrat</button>
+          <button class="btn btn-info btn-sm" onclick="showClientContracts('${t.id}', '${t.name}', 'resident')">📄 Contrat</button>
           <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
         </div></td>
       </tr>`);
@@ -1383,44 +1383,141 @@ async function saveNewContract() {
   loadContracts();
 }
 
-async function showClientContracts(clientId, clientName) {
-  // Créer ou réutiliser overlay
+// Texte des conditions selon le type de client
+const CONTRACT_CONDITIONS = {
+  resident: {
+    title: 'Conditions d\'utilisation — Résident CoHabitat',
+    sections: [
+      { icon: '📋', title: 'Dispositions générales', text: 'Les présentes conditions régissent l\'utilisation de l\'ensemble des services numériques mis à disposition des résidents de la communauté Modulimo via la plateforme CoHabitat. En signant ce contrat, vous acceptez les présentes conditions dans leur intégralité.' },
+      { icon: '🏠', title: 'Espaces communs', text: 'Les réservations d\'espaces communs sont soumises à disponibilité. Toute réservation non annulée au moins 2 heures à l\'avance sera facturée au tarif plein. Le résident est responsable de l\'état de l\'espace à la fin de son utilisation.' },
+      { icon: '🚗', title: 'Auto-partage', text: 'Le covoiturage est basé sur la confiance mutuelle entre résidents. Modulimo agit comme facilitateur et n\'est pas responsable des incidents survenus lors des trajets. Tout incident doit être déclaré dans les 24 heures.' },
+      { icon: '🍱', title: 'Machine Lunch', text: 'Les commandes confirmées sont débitées immédiatement du solde virtuel. Aucun remboursement n\'est accordé pour une commande déjà préparée ou distribuée. Les horaires de service sont affichés sur la borne.' },
+      { icon: '💳', title: 'Solde virtuel', text: 'Le solde virtuel CoHabitat n\'est pas remboursable en argent. En cas de résiliation du contrat, le solde restant est perdu après un délai de 30 jours.' },
+      { icon: '🔒', title: 'Suspension et résiliation', text: 'Un administrateur peut suspendre ou révoquer l\'accès d\'un résident à tout moment, sans préavis, en cas de non-respect des conditions. La résiliation du contrat entraîne la perte immédiate de l\'accès à tous les services.' },
+      { icon: '🛡', title: 'Protection des données', text: 'Vos données personnelles sont protégées conformément à la Loi 25 sur la protection des renseignements personnels. Vous pouvez demander la suppression de vos données en tout temps en contactant l\'administration. Vos données ne sont jamais vendues à des tiers.' },
+    ]
+  },
+  owner: {
+    title: 'Entente de licence CoHabitat — Propriétaire d\'immeuble',
+    sections: [
+      { icon: '📋', title: 'Objet de l\'entente', text: 'La présente entente définit les conditions dans lesquelles Modulimo inc. fournit la plateforme CoHabitat et ses modules au propriétaire de l\'immeuble désigné. En signant, le propriétaire accepte toutes les conditions ci-dessous.' },
+      { icon: '🏢', title: 'Licence et modules', text: 'Modulimo accorde une licence non exclusive d\'utilisation de la plateforme CoHabitat selon le plan souscrit. Les modules activés (espaces communs, auto-partage, Machine Lunch) sont définis dans la licence associée à l\'immeuble.' },
+      { icon: '👤', title: 'Responsabilités du propriétaire', text: 'Le propriétaire désigne un administrateur responsable de la gestion des résidents de son immeuble. Il est responsable de l\'approbation des nouveaux résidents et du respect des conditions d\'utilisation par ceux-ci.' },
+      { icon: '💰', title: 'Facturation et paiement', text: 'Les frais de licence sont dus selon les termes convenus avec Modulimo. En cas de non-paiement dans les 30 jours suivant l\'échéance, Modulimo se réserve le droit de suspendre l\'accès à la plateforme pour l\'ensemble des résidents.' },
+      { icon: '🔄', title: 'Renouvellement', text: 'Le contrat est renouvelable automatiquement selon la période convenue, sauf avis de résiliation transmis à Modulimo au moins 30 jours avant l\'échéance. Tout module ajouté en cours de contrat est facturé au prorata.' },
+      { icon: '📊', title: 'Données et confidentialité', text: 'Modulimo s\'engage à protéger les données des résidents conformément à la Loi 25. Les données ne sont pas utilisées à des fins commerciales tierces. Le propriétaire peut demander la suppression complète des données de son immeuble en tout temps.' },
+      { icon: '⚖️', title: 'Limitation de responsabilité', text: 'Modulimo n\'est pas responsable des incidents entre résidents survenant dans le cadre de l\'utilisation des services. La responsabilité de Modulimo est limitée au montant des frais de licence payés au cours des 12 derniers mois.' },
+    ]
+  }
+};
+
+async function showClientContracts(clientId, clientName, clientType) {
+  // Déterminer le type si non fourni
+  if(!clientType) {
+    const c = clientsCache.find(x => x.id === clientId);
+    clientType = c?.client_type === 'owner' ? 'owner' : 'resident';
+  }
+  const conditions = CONTRACT_CONDITIONS[clientType] || CONTRACT_CONDITIONS.resident;
+
   let overlay = document.getElementById('client-contracts-modal');
   if(!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'client-contracts-modal';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;display:flex;align-items:center;justify-content:center;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:1000;display:flex;align-items:center;justify-content:center;';
     overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
     document.body.appendChild(overlay);
   }
 
-  overlay.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px;max-width:700px;width:92%;max-height:80vh;overflow-y:auto;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-      <div>
-        <h3 style="margin:0 0 4px;color:var(--text);">📄 Contrats — ${clientName}</h3>
-        <p style="margin:0;font-size:12px;color:var(--text3);">Historique et statut des contrats</p>
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:min(860px,96vw);max-height:90vh;display:flex;flex-direction:column;">
+
+      <!-- En-tête -->
+      <div style="padding:24px 28px 0;border-bottom:1px solid var(--border);flex-shrink:0;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <h3 style="margin:0 0 4px;color:var(--text);font-size:1.1rem;">${clientType === 'owner' ? '🏢' : '👤'} ${clientName}</h3>
+            <p style="margin:0;font-size:12px;color:var(--text3);">${clientType === 'owner' ? 'Propriétaire d\'immeuble' : 'Résident'}</p>
+          </div>
+          <button onclick="document.getElementById('client-contracts-modal').remove()" style="background:none;border:none;color:var(--text3);font-size:1.4rem;cursor:pointer;padding:4px 8px;line-height:1;">×</button>
+        </div>
+        <!-- Onglets -->
+        <div style="display:flex;gap:0;">
+          <button id="ccm-tab-contracts" onclick="ccmShowTab('contracts')"
+            style="padding:10px 20px;border:none;border-bottom:2px solid var(--accent);background:none;color:var(--accent);font-weight:600;cursor:pointer;font-family:var(--font-sans,system-ui);font-size:13px;">
+            📄 Contrats
+          </button>
+          <button id="ccm-tab-conditions" onclick="ccmShowTab('conditions')"
+            style="padding:10px 20px;border:none;border-bottom:2px solid transparent;background:none;color:var(--text3);cursor:pointer;font-family:var(--font-sans,system-ui);font-size:13px;">
+            📋 Conditions
+          </button>
+          <button id="ccm-tab-signature" onclick="ccmShowTab('signature')"
+            style="padding:10px 20px;border:none;border-bottom:2px solid transparent;background:none;color:var(--text3);cursor:pointer;font-family:var(--font-sans,system-ui);font-size:13px;">
+            ✍️ Signature
+          </button>
+        </div>
       </div>
-      <button onclick="document.getElementById('client-contracts-modal').remove()" style="background:none;border:none;color:var(--text3);font-size:1.4rem;cursor:pointer;padding:4px 8px;">×</button>
-    </div>
-    <div id="ccm-content" style="color:var(--text3);text-align:center;padding:20px;">Chargement…</div>
-    <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
-      <button class="btn btn-primary btn-sm" onclick="openContractForClient('${clientId}', 'resident')">+ Nouveau contrat</button>
-      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('client-contracts-modal').remove()">Fermer</button>
-    </div>
-  </div>`;
+
+      <!-- Corps -->
+      <div style="flex:1;overflow-y:auto;">
+
+        <!-- Onglet Contrats -->
+        <div id="ccm-panel-contracts" style="padding:24px 28px;">
+          <div id="ccm-contracts-list" style="color:var(--text3);text-align:center;padding:20px;">Chargement…</div>
+          <div style="margin-top:16px;">
+            <button class="btn btn-primary btn-sm" onclick="openContractForClient('${clientId}', '${clientType}')">+ Nouveau contrat</button>
+          </div>
+        </div>
+
+        <!-- Onglet Conditions -->
+        <div id="ccm-panel-conditions" style="padding:24px 28px;display:none;">
+          <h4 style="color:var(--accent);margin:0 0 20px;font-size:1rem;">${conditions.title}</h4>
+          ${conditions.sections.map(s => `
+            <div style="margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <span style="font-size:1.2rem;">${s.icon}</span>
+                <strong style="color:var(--text);font-size:0.95rem;">${s.title}</strong>
+              </div>
+              <p style="margin:0;color:var(--text2);font-size:13px;line-height:1.7;">${s.text}</p>
+            </div>`).join('')}
+        </div>
+
+        <!-- Onglet Signature -->
+        <div id="ccm-panel-signature" style="padding:24px 28px;display:none;">
+          <div id="ccm-signature-area">Chargement…</div>
+        </div>
+
+      </div>
+    </div>`;
+
   overlay.style.display = 'flex';
 
   // Charger les contrats
+  await ccmLoadContracts(clientId, clientName, clientType);
+  // Charger la zone de signature
+  await ccmLoadSignature(clientId, clientName, clientType);
+}
+
+function ccmShowTab(tab) {
+  ['contracts','conditions','signature'].forEach(t => {
+    const btn   = document.getElementById('ccm-tab-' + t);
+    const panel = document.getElementById('ccm-panel-' + t);
+    const active = t === tab;
+    if(btn)   { btn.style.borderBottomColor = active ? 'var(--accent)' : 'transparent'; btn.style.color = active ? 'var(--accent)' : 'var(--text3)'; btn.style.fontWeight = active ? '600' : '400'; }
+    if(panel) panel.style.display = active ? 'block' : 'none';
+  });
+}
+
+async function ccmLoadContracts(clientId, clientName, clientType) {
+  const el = document.getElementById('ccm-contracts-list');
+  if(!el) return;
+
   const { data: contracts } = await sb.from('contracts')
-    .select('id, type, plan, status, starts_at, ends_at, signed_at, signed_by_name, created_at')
+    .select('id,type,plan,status,starts_at,ends_at,signed_at,signed_by_name')
     .eq('client_id', clientId)
     .order('created_at', { ascending: false });
 
-  const ccm = document.getElementById('ccm-content');
-  if(!ccm) return;
-
   if(!contracts || !contracts.length) {
-    ccm.innerHTML = '<p style="color:var(--text3);font-style:italic;">Aucun contrat pour ce client.</p>';
+    el.innerHTML = '<p style="color:var(--text3);font-style:italic;text-align:center;">Aucun contrat pour ce client.</p>';
     return;
   }
 
@@ -1428,9 +1525,8 @@ async function showClientContracts(clientId, clientName) {
   const statusLabels = { active:'Actif', pending:'En attente', terminated:'Résilié', suspended:'Suspendu' };
   const planLabels   = { local:'🏠 Local', network:'🔗 Réseau', owner:'🏢 Propriétaire' };
 
-  ccm.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;">
     <thead><tr style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">
-      <th style="text-align:left;padding:8px 10px;">Type</th>
       <th style="text-align:left;padding:8px 10px;">Forfait</th>
       <th style="text-align:left;padding:8px 10px;">Début</th>
       <th style="text-align:left;padding:8px 10px;">Fin</th>
@@ -1441,27 +1537,118 @@ async function showClientContracts(clientId, clientName) {
     <tbody>
     ${contracts.map(c => {
       const signedBadge = c.signed_at
-        ? `<span class="badge badge-green" style="font-size:10px;" title="${c.signed_by_name||''}">✓ ${new Date(c.signed_at).toLocaleDateString('fr-CA')}</span>`
+        ? `<span class="badge badge-green" style="font-size:10px;">✓ ${new Date(c.signed_at).toLocaleDateString('fr-CA')}</span>`
         : `<span class="badge badge-gray" style="font-size:10px;">Non signé</span>`;
       const canSuspend    = c.status === 'active';
       const canReactivate = c.status === 'suspended';
       const canTerminate  = c.status === 'active' || c.status === 'suspended';
       return `<tr style="border-top:1px solid var(--border);${c.status==='terminated'?'opacity:.5':''}">
-        <td style="padding:10px;font-size:12px;">${c.type === 'owner' ? '🏢 Proprio' : '👤 Résident'}</td>
-        <td style="padding:10px;font-size:12px;">${planLabels[c.plan] || c.plan || '—'}</td>
+        <td style="padding:10px;font-size:13px;">${planLabels[c.plan] || c.plan || '—'}</td>
         <td style="padding:10px;font-size:12px;">${c.starts_at || '—'}</td>
         <td style="padding:10px;font-size:12px;">${c.ends_at || '∞'}</td>
         <td style="padding:10px;"><span class="badge ${statusColors[c.status]||'badge-gray'}">${statusLabels[c.status]||c.status}</span></td>
         <td style="padding:10px;">${signedBadge}</td>
         <td style="padding:10px;"><div class="td-actions">
-          ${canSuspend    ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}').then(()=>showClientContracts('${clientId}','${clientName}'))">⏸</button>` : ''}
-          ${canReactivate ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}').then(()=>showClientContracts('${clientId}','${clientName}'))">▶</button>` : ''}
-          ${canTerminate  ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}').then(()=>showClientContracts('${clientId}','${clientName}'))">✕</button>` : ''}
+          ${canSuspend    ? `<button class="btn btn-warning btn-sm" title="Suspendre" onclick="suspendContract('${c.id}').then(()=>ccmLoadContracts('${clientId}','${clientName}','${clientType}'))">⏸</button>` : ''}
+          ${canReactivate ? `<button class="btn btn-success btn-sm" title="Réactiver" onclick="reactivateContract('${c.id}').then(()=>ccmLoadContracts('${clientId}','${clientName}','${clientType}'))">▶</button>` : ''}
+          ${canTerminate  ? `<button class="btn btn-danger btn-sm" title="Résilier" onclick="terminateContract('${c.id}').then(()=>ccmLoadContracts('${clientId}','${clientName}','${clientType}'))">✕</button>` : ''}
         </div></td>
       </tr>`;
     }).join('')}
     </tbody>
   </table>`;
+}
+
+async function ccmLoadSignature(clientId, clientName, clientType) {
+  const el = document.getElementById('ccm-signature-area');
+  if(!el) return;
+
+  // Chercher le contrat actif le plus récent
+  const { data: contracts } = await sb.from('contracts')
+    .select('id,status,plan,signed_at,signed_by_name,signature_data')
+    .eq('client_id', clientId)
+    .in('status', ['active', 'pending'])
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  const contract = contracts?.[0];
+
+  if(!contract) {
+    el.innerHTML = '<p style="color:var(--text3);text-align:center;">Aucun contrat actif à signer.</p>';
+    return;
+  }
+
+  if(contract.signed_at) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:20px;">
+        <div style="color:var(--success);font-size:2rem;margin-bottom:12px;">✓</div>
+        <p style="font-weight:700;color:var(--text);margin:0 0 6px;">Contrat signé</p>
+        <p style="color:var(--text3);font-size:13px;margin:0 0 16px;">Signé le ${new Date(contract.signed_at).toLocaleDateString('fr-CA')} par <strong>${contract.signed_by_name || '—'}</strong></p>
+        ${contract.signature_data ? `<img src="${contract.signature_data}" style="max-width:280px;border:1px solid var(--border);border-radius:6px;background:#fff;padding:8px;">` : ''}
+      </div>`;
+    return;
+  }
+
+  // Pad de signature admin
+  el.innerHTML = `
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">
+      En signant ci-dessous, ${clientType === 'owner' ? 'le propriétaire accepte l\'entente de licence Modulimo' : 'le résident accepte les conditions d\'utilisation CoHabitat'}.
+    </p>
+    <div style="position:relative;border:2px solid var(--border);border-radius:8px;overflow:hidden;background:#fff;margin-bottom:12px;">
+      <canvas id="ccm-sig-pad" width="760" height="160" style="display:block;width:100%;touch-action:none;cursor:crosshair;"></canvas>
+      <div id="ccm-sig-ph" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#aaa;font-size:14px;">Signez ici</div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button onclick="ccmClearSig()" class="btn btn-secondary" style="flex:1;">✕ Effacer</button>
+      <button onclick="ccmSaveSig('${contract.id}', '${clientId}', '${clientName}', '${clientType}')" class="btn btn-primary" style="flex:2;">✓ Enregistrer la signature</button>
+    </div>`;
+
+  // Init pad
+  setTimeout(() => {
+    const canvas = document.getElementById('ccm-sig-pad');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    let drawing = false;
+    function getPos(e) {
+      const r = canvas.getBoundingClientRect();
+      const sx = canvas.width/r.width, sy = canvas.height/r.height;
+      const s = e.touches ? e.touches[0] : e;
+      return { x:(s.clientX-r.left)*sx, y:(s.clientY-r.top)*sy };
+    }
+    canvas.onmousedown = canvas.ontouchstart = (e) => { e.preventDefault(); drawing=true; const p=getPos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); };
+    canvas.onmousemove = canvas.ontouchmove = (e) => { if(!drawing) return; e.preventDefault(); const p=getPos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); document.getElementById('ccm-sig-ph').style.display='none'; };
+    canvas.onmouseup = canvas.ontouchend = () => { drawing=false; };
+  }, 50);
+}
+
+function ccmClearSig() {
+  const c = document.getElementById('ccm-sig-pad');
+  if(c) { c.getContext('2d').clearRect(0,0,c.width,c.height); }
+  const ph = document.getElementById('ccm-sig-ph');
+  if(ph) ph.style.display = 'flex';
+}
+
+async function ccmSaveSig(contractId, clientId, clientName, clientType) {
+  const canvas = document.getElementById('ccm-sig-pad');
+  if(!canvas) return;
+  const pixels = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+  if(!pixels.some((v,i) => i%4===3 && v>0)) { toast('Veuillez signer avant d\'enregistrer','error'); return; }
+
+  const sigData   = canvas.toDataURL('image/png');
+  const signedAt  = new Date().toISOString();
+  const signerName = clientType === 'owner' ? (clientsCache.find(x=>x.id===clientId)?.contact_name || clientName) : clientName;
+
+  const { error } = await sb.from('contracts').update({
+    signed_at: signedAt,
+    signed_by_name: signerName,
+    signature_data: sigData
+  }).eq('id', contractId);
+
+  if(error) { toast('Erreur: ' + error.message, 'error'); return; }
+  toast('Signature enregistrée ✓', 'success');
+  await ccmLoadSignature(clientId, clientName, clientType);
+  await ccmLoadContracts(clientId, clientName, clientType);
 }
 
 async function toggleClientActive(id, active) {
