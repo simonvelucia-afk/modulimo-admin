@@ -1296,10 +1296,85 @@ async function terminateContract(id) {
 async function editContract(id) {
   const { data: c } = await sb.from('contracts').select('*').eq('id', id).single();
   if(!c) return;
-  // Simple prompt pour l'instant
-  const ends = prompt('Date de fin (AAAA-MM-JJ, vide = indéterminé) :', c.ends_at || '');
-  if(ends === null) return;
-  await sb.from('contracts').update({ ends_at: ends || null }).eq('id', id);
+
+  if(c.type === 'owner') {
+    // Modal complet pour contrat proprio avec commission réseau
+    const flat = c.network_flat_fee ?? 1.00;
+    const pct  = c.network_commission_pct ?? 5.00;
+    let overlay = document.getElementById('contract-quick-modal');
+    if(!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'contract-quick-modal';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;';
+      overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;max-width:440px;width:90%;margin:40px auto;">
+        <h3 style="margin:0 0 6px;color:var(--text)">Modifier contrat propriétaire</h3>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Date fin</label>
+              <input type="date" id="ec-end" value="${c.ends_at || ''}" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+            <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Statut</label>
+              <select id="ec-status" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;">
+                <option value="active" ${c.status==='active'?'selected':''}>Actif</option>
+                <option value="pending" ${c.status==='pending'?'selected':''}>En attente</option>
+                <option value="suspended" ${c.status==='suspended'?'selected':''}>Suspendu</option>
+              </select></div>
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent2);margin-bottom:10px;">🌐 Commission réseau Modulimo</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Frais fixes / réservation ($)</label>
+                <input type="number" id="ec-flat-fee" value="${flat}" min="0" step="0.25" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+              <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Commission (%)</label>
+                <input type="number" id="ec-commission-pct" value="${pct}" min="0" max="100" step="0.5" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:8px;">Ex: réservation 15$ → Modulimo reçoit <span id="ec-commission-preview" style="color:var(--accent);">${(flat + 15 * pct / 100).toFixed(2)}$</span>, proprio reçoit <span id="ec-net-preview" style="color:var(--accent2);">${(15 - flat - 15 * pct / 100).toFixed(2)}$</span></div>
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+            <button class="btn btn-secondary" onclick="document.getElementById('contract-quick-modal').remove()">Annuler</button>
+            <button class="btn btn-primary" onclick="saveEditContract('${id}')">Enregistrer</button>
+          </div>
+        </div>
+      </div>`;
+    overlay.style.display = 'flex';
+    setTimeout(() => {
+      function updatePreview() {
+        const f = parseFloat(document.getElementById('ec-flat-fee')?.value) || 0;
+        const p = parseFloat(document.getElementById('ec-commission-pct')?.value) || 0;
+        const comm = f + 15 * p / 100;
+        const ep = document.getElementById('ec-commission-preview');
+        const np = document.getElementById('ec-net-preview');
+        if(ep) ep.textContent = comm.toFixed(2) + '$';
+        if(np) np.textContent = (15 - comm).toFixed(2) + '$';
+      }
+      document.getElementById('ec-flat-fee')?.addEventListener('input', updatePreview);
+      document.getElementById('ec-commission-pct')?.addEventListener('input', updatePreview);
+    }, 50);
+  } else {
+    // Contrat résident — date de fin seulement
+    const ends = prompt('Date de fin (AAAA-MM-JJ, vide = indéterminé) :', c.ends_at || '');
+    if(ends === null) return;
+    await sb.from('contracts').update({ ends_at: ends || null }).eq('id', id);
+    toast('Contrat mis à jour', 'success');
+    loadContracts();
+  }
+}
+
+async function saveEditContract(id) {
+  const end     = document.getElementById('ec-end')?.value || null;
+  const status  = document.getElementById('ec-status')?.value;
+  const flatFee = parseFloat(document.getElementById('ec-flat-fee')?.value) ?? 1.00;
+  const commPct = parseFloat(document.getElementById('ec-commission-pct')?.value) ?? 5.00;
+  await sb.from('contracts').update({
+    ends_at: end,
+    status,
+    network_flat_fee: flatFee,
+    network_commission_pct: commPct
+  }).eq('id', id);
+  document.getElementById('contract-quick-modal')?.remove();
   toast('Contrat mis à jour', 'success');
   loadContracts();
 }
@@ -1404,6 +1479,7 @@ const CONTRACT_CONDITIONS = {
       { icon: '🍱', title: 'Machine Lunch', text: 'Les commandes confirmées sont débitées immédiatement du solde virtuel. Aucun remboursement n\'est accordé pour une commande déjà préparée ou distribuée. Les horaires de service sont affichés sur la borne.' },
       { icon: '💳', title: 'Solde virtuel', text: 'Le solde virtuel CoHabitat n\'est pas remboursable en argent. En cas de résiliation du contrat, le solde restant est perdu après un délai de 30 jours.' },
       { icon: '🔒', title: 'Suspension et résiliation', text: 'Un administrateur peut suspendre ou révoquer l\'accès d\'un résident à tout moment, sans préavis, en cas de non-respect des conditions. La résiliation du contrat entraîne la perte immédiate de l\'accès à tous les services.' },
+      { icon: '⚖️', title: 'Limitation de responsabilité', text: 'Modulimo agit à titre de facilitateur technologique et ne peut être tenu responsable d\'aucune perte, interruption de service ou dommage résultant d\'un mauvais fonctionnement du système attribuable à des causes hors de son contrôle, incluant sans s\'y limiter les pannes d\'infrastructure, les défaillances de fournisseurs tiers, les cyberattaques, les catastrophes naturelles ou toute situation imprévue. L\'utilisation de la plateforme est fournie telle quelle, sans garantie de disponibilité continue.' },
       { icon: '🛡', title: 'Protection des données', text: 'Vos données personnelles sont protégées conformément à la Loi 25 sur la protection des renseignements personnels. Vous pouvez demander la suppression de vos données en tout temps en contactant l\'administration. Vos données ne sont jamais vendues à des tiers.' },
     ]
   },
@@ -1416,7 +1492,7 @@ const CONTRACT_CONDITIONS = {
       { icon: '💰', title: 'Facturation et paiement', text: 'Les frais de licence sont dus selon les termes convenus avec Modulimo. En cas de non-paiement dans les 30 jours suivant l\'échéance, Modulimo se réserve le droit de suspendre l\'accès à la plateforme pour l\'ensemble des résidents.' },
       { icon: '🔄', title: 'Renouvellement', text: 'Le contrat est renouvelable automatiquement selon la période convenue, sauf avis de résiliation transmis à Modulimo au moins 30 jours avant l\'échéance. Tout module ajouté en cours de contrat est facturé au prorata.' },
       { icon: '📊', title: 'Données et confidentialité', text: 'Modulimo s\'engage à protéger les données des résidents conformément à la Loi 25. Les données ne sont pas utilisées à des fins commerciales tierces. Le propriétaire peut demander la suppression complète des données de son immeuble en tout temps.' },
-      { icon: '⚖️', title: 'Limitation de responsabilité', text: 'Modulimo n\'est pas responsable des incidents entre résidents survenant dans le cadre de l\'utilisation des services. La responsabilité de Modulimo est limitée au montant des frais de licence payés au cours des 12 derniers mois.' },
+      { icon: '⚖️', title: 'Limitation de responsabilité', text: 'Modulimo n\'est pas responsable des incidents entre résidents survenant dans le cadre de l\'utilisation des services. Modulimo ne peut être tenu responsable d\'aucune perte, interruption de service ou dommage résultant d\'un mauvais fonctionnement du système attribuable à des causes hors de son contrôle, incluant sans s\'y limiter les pannes d\'infrastructure, les défaillances de fournisseurs tiers, les cyberattaques, les catastrophes naturelles ou toute situation imprévue. La responsabilité de Modulimo est en tout état de cause limitée au montant des frais de licence payés au cours des 12 derniers mois.' },
     ]
   }
 };
@@ -1705,6 +1781,16 @@ async function openContractForClient(clientId, type) {
           </div>
           <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Notes</label>
             <textarea id="oc-notes" rows="2" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;resize:vertical;box-sizing:border-box;"></textarea></div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent2);margin-bottom:10px;">🌐 Commission réseau Modulimo</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Frais fixes / réservation ($)</label>
+                <input type="number" id="oc-flat-fee" value="1.00" min="0" step="0.25" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+              <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Commission (%)</label>
+                <input type="number" id="oc-commission-pct" value="5" min="0" max="100" step="0.5" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:8px;">Ex: réservation 15$ → Modulimo reçoit <span id="oc-commission-preview" style="color:var(--accent);">1.75$</span>, proprio reçoit <span id="oc-net-preview" style="color:var(--accent2);">13.25$</span></div>
+          </div>
           <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
             <button class="btn btn-secondary" onclick="document.getElementById('contract-quick-modal').remove()">Annuler</button>
             <button class="btn btn-primary" onclick="saveOwnerContract('${clientId}')">Créer le contrat</button>
@@ -1712,6 +1798,22 @@ async function openContractForClient(clientId, type) {
         </div>
       </div>`;
     overlay.style.display = 'flex';
+    // Preview commission en temps réel
+    setTimeout(() => {
+      function updatePreview() {
+        const flat = parseFloat(document.getElementById('oc-flat-fee')?.value) || 0;
+        const pct  = parseFloat(document.getElementById('oc-commission-pct')?.value) || 0;
+        const gross = 15;
+        const comm = flat + gross * pct / 100;
+        const net  = gross - comm;
+        const ep = document.getElementById('oc-commission-preview');
+        const np = document.getElementById('oc-net-preview');
+        if(ep) ep.textContent = comm.toFixed(2) + '$';
+        if(np) np.textContent = net.toFixed(2) + '$';
+      }
+      document.getElementById('oc-flat-fee')?.addEventListener('input', updatePreview);
+      document.getElementById('oc-commission-pct')?.addEventListener('input', updatePreview);
+    }, 50);
   } else {
     await openContractModal();
     setTimeout(() => {
@@ -1722,11 +1824,13 @@ async function openContractForClient(clientId, type) {
 }
 
 async function saveOwnerContract(clientId) {
-  const status = document.getElementById('oc-status')?.value || 'active';
-  const plan   = document.getElementById('oc-plan')?.value || 'starter';
-  const start  = document.getElementById('oc-start')?.value;
-  const end    = document.getElementById('oc-end')?.value || null;
-  const notes  = document.getElementById('oc-notes')?.value || null;
+  const status    = document.getElementById('oc-status')?.value || 'active';
+  const plan      = document.getElementById('oc-plan')?.value || 'starter';
+  const start     = document.getElementById('oc-start')?.value;
+  const end       = document.getElementById('oc-end')?.value || null;
+  const notes     = document.getElementById('oc-notes')?.value || null;
+  const flatFee   = parseFloat(document.getElementById('oc-flat-fee')?.value) ?? 1.00;
+  const commPct   = parseFloat(document.getElementById('oc-commission-pct')?.value) ?? 5.00;
 
   const { error } = await sb.from('contracts').insert({
     client_id: clientId,
@@ -1736,6 +1840,8 @@ async function saveOwnerContract(clientId) {
     starts_at: start || new Date().toISOString().slice(0,10),
     ends_at: end,
     notes,
+    network_flat_fee: flatFee,
+    network_commission_pct: commPct,
     created_by: 'modulimo_admin'
   });
   if(error) { toast('Erreur: ' + error.message, 'error'); return; }
