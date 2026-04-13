@@ -1175,6 +1175,7 @@ async function loadContracts() {
         <td><span class="badge ${statusColors[c.status] || 'badge-gray'}">${statusLabels[c.status] || c.status}</span></td>
         <td>${signedBadge}</td>
         <td><div class="td-actions">
+          <button class="btn btn-info btn-sm" onclick="showClientContracts('${c.client_id}', '${resName.replace(/'/g, "\\'")}', 'resident')">📄 Contrat</button>
           <button class="btn btn-secondary btn-sm" onclick="editContract('${c.id}')">Modifier</button>
           ${canSuspend    ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}')">⏸ Suspendre</button>` : ''}
           ${canReactivate ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}')">▶ Réactiver</button>` : ''}
@@ -1202,6 +1203,7 @@ async function loadContracts() {
         <td><span class="badge ${statusColors[c.status] || 'badge-gray'}">${statusLabels[c.status] || c.status}</span></td>
         <td>${signedBadge}</td>
         <td><div class="td-actions">
+          <button class="btn btn-info btn-sm" onclick="showClientContracts('${c.client_id}', '${(resClient.contact_name || resClient.name || '').replace(/'/g, "\\'")}', 'resident')">📄 Contrat</button>
           <button class="btn btn-secondary btn-sm" onclick="editContract('${c.id}')">Modifier</button>
           ${c.status === 'active' ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}')">⏸ Suspendre</button>` : ''}
           ${c.status === 'suspended' ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}')">▶ Réactiver</button>` : ''}
