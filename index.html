@@ -1216,18 +1216,56 @@ async function loadContracts() {
   tbody.innerHTML = rows.join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun contrat</td></tr>';
 }
 
+
+// Propager un changement de statut vers le profil CoHabitat du résident
+async function propagateStatusToCoHabitat(contractId, isActive) {
+  try {
+    // Trouver le client Central lié au contrat
+    const { data: c } = await sb.from('contracts').select('client_id, owner_client_id').eq('id', contractId).single();
+    if (!c) return;
+    const { data: client } = await sb.from('clients').select('cohabitat_user_id, owner_client_id').eq('id', c.client_id).single();
+    if (!client?.cohabitat_user_id) return;
+    const ownId = c.owner_client_id || client.owner_client_id;
+    if (!ownId) return;
+    // Trouver l'URL Supabase via la licence du propriétaire
+    const { data: lics } = await sb.from('licences').select('supabase_url, anon_key').eq('client_id', ownId).eq('active', true).limit(1);
+    const lic = lics?.[0];
+    if (!lic?.supabase_url) return;
+    const key = lic.anon_key || CENTRAL_KEY;
+    await fetch(lic.supabase_url + '/rest/v1/profiles?id=eq.' + client.cohabitat_user_id, {
+      method: 'PATCH',
+      headers: { apikey: key, Authorization: 'Bearer ' + key, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ is_active: isActive, status_changed_at: new Date().toISOString() })
+    });
+    console.log('[Central] Profil CoHabitat mis à jour:', client.cohabitat_user_id, '→ is_active:', isActive);
+  } catch(e) {
+    console.warn('[Central] propagateStatusToCoHabitat (non bloquant):', e.message);
+  }
+}
+
 async function suspendContract(id) {
   if(!confirm('Suspendre ce contrat ? Le résident ne pourra plus se connecter.')) return;
+  // 1. Mettre à jour le contrat
   const { error } = await sb.from('contracts').update({ status: 'suspended' }).eq('id', id);
   if(error) { toast('Erreur: ' + error.message, 'error'); return; }
-  toast('Contrat suspendu ⏸', 'success');
+  // 2. Désactiver le client Central
+  const { data: c } = await sb.from('contracts').select('client_id').eq('id', id).single();
+  if(c?.client_id) await sb.from('clients').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', c.client_id);
+  // 3. Propager vers CoHabitat
+  await propagateStatusToCoHabitat(id, false);
+  toast('Contrat suspendu ⏸ — accès CoHabitat révoqué', 'success');
   loadContracts();
 }
 
 async function reactivateContract(id) {
   const { error } = await sb.from('contracts').update({ status: 'active' }).eq('id', id);
   if(error) { toast('Erreur: ' + error.message, 'error'); return; }
-  toast('Contrat réactivé ✓', 'success');
+  // Réactiver le client Central
+  const { data: c } = await sb.from('contracts').select('client_id').eq('id', id).single();
+  if(c?.client_id) await sb.from('clients').update({ is_active: true, updated_at: new Date().toISOString() }).eq('id', c.client_id);
+  // Propager vers CoHabitat
+  await propagateStatusToCoHabitat(id, true);
+  toast('Contrat réactivé ✓ — accès CoHabitat restauré', 'success');
   loadContracts();
 }
 
@@ -1277,8 +1315,33 @@ async function terminateContract(id) {
       });
     }
 
-    if(!cascErr) toast('Contrat propriétaire résilié — tous les contrats résidents ont été résiliés ⚠', 'success');
+    // Désactiver tous les clients résidents dans Central + CoHabitat
+    if(resContracts?.length) {
+      const resIds = resContracts.map(r => r.client_id).filter(Boolean);
+      if(resIds.length) {
+        await sb.from('clients').update({ is_active: false, updated_at: new Date().toISOString() }).in('id', resIds);
+        // Propager vers chaque profil CoHabitat via la licence
+        const { data: lics } = await sb.from('licences').select('supabase_url, anon_key').eq('client_id', c.client_id).eq('active', true).limit(1);
+        const lic = lics?.[0];
+        if(lic?.supabase_url) {
+          const key = lic.anon_key || CENTRAL_KEY;
+          const { data: cohUsers } = await sb.from('clients').select('cohabitat_user_id').in('id', resIds);
+          for(const u of (cohUsers || [])) {
+            if(!u.cohabitat_user_id) continue;
+            fetch(lic.supabase_url + '/rest/v1/profiles?id=eq.' + u.cohabitat_user_id, {
+              method: 'PATCH',
+              headers: { apikey: key, Authorization: 'Bearer ' + key, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+              body: JSON.stringify({ is_active: false, status_changed_at: new Date().toISOString() })
+            }).catch(() => {});
+          }
+        }
+      }
+    }
+    if(!cascErr) toast('Contrat propriétaire résilié — tous les accès CoHabitat révoqués ⚠', 'success');
   } else {
+    // Désactiver client Central + propager vers CoHabitat
+    if(c?.client_id) await sb.from('clients').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', c.client_id);
+    await propagateStatusToCoHabitat(id, false);
     // Email au résident
     const { data: resClient } = await sb.from('clients')
       .select('name,contact_email,contact_name').eq('id', c.client_id).single();
@@ -1290,7 +1353,7 @@ async function terminateContract(id) {
         building: ownerClient?.name || ''
       });
     }
-    toast('Contrat résilié', 'success');
+    toast('Contrat résilié — accès CoHabitat révoqué', 'success');
   }
   loadContracts();
 }
