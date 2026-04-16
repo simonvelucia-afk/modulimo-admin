@@ -183,7 +183,7 @@
                 <th>Début</th>
                 <th>Fin</th>
                 <th>Statut</th>
-                <th>Signé</th>
+                <th>Payé jusqu'au</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -1099,13 +1099,44 @@ async function rejectResident(clientId) {
 }
 
 // ── CONTRATS ──────────────────────────────────────────────────────────────────
+
+// Renouveler le paiement mensuel d'un résident (+1 mois à partir d'aujourd'hui ou de paid_until)
+async function renewPayment(contractId) {
+  const { data: c } = await sb.from('contracts').select('id, status, paid_until, client_id').eq('id', contractId).single();
+  if (!c) return;
+  const base = (c.paid_until && c.paid_until >= new Date().toISOString().slice(0,10))
+    ? new Date(c.paid_until) : new Date();
+  base.setMonth(base.getMonth() + 1);
+  const newPaidUntil = base.toISOString().slice(0,10);
+  const updates = { paid_until: newPaidUntil };
+  if (c.status === 'suspended') updates.status = 'active';
+  const { error } = await sb.from('contracts').update(updates).eq('id', contractId);
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  // Si réactivation, propager vers CoHabitat
+  if (c.status === 'suspended') await propagateStatusToCoHabitat(contractId, true);
+  toast('✓ Paiement enregistré — accès actif jusqu'au ' + newPaidUntil, 'success');
+  loadContracts();
+}
+
+// Suspendre pour non-paiement
+async function suspendForNonPayment(contractId) {
+  if (!confirm('Suspendre l'accès pour non-paiement ?')) return;
+  const { error } = await sb.from('contracts').update({ status: 'suspended' }).eq('id', contractId);
+  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+  const { data: c } = await sb.from('contracts').select('client_id').eq('id', contractId).single();
+  if (c?.client_id) await sb.from('clients').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', c.client_id);
+  await propagateStatusToCoHabitat(contractId, false);
+  toast('🔒 Accès suspendu pour non-paiement', 'success');
+  loadContracts();
+}
+
 async function loadContracts() {
   const tbody = document.getElementById('contracts-tbody');
   if(!tbody) return;
   tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Chargement…</td></tr>';
 
   const { data, error } = await sb.from('contracts')
-    .select('id, type, plan, status, starts_at, ends_at, client_id, owner_client_id, created_at, signed_at, signed_by_name')
+    .select('id, type, plan, status, starts_at, ends_at, paid_until, client_id, owner_client_id, created_at, signed_at, signed_by_name')
     .order('owner_client_id', { ascending: true })
     .order('created_at', { ascending: false });
 
@@ -1165,21 +1196,26 @@ async function loadContracts() {
       const signedBadge = c.signed_at
         ? `<span class="badge badge-green" style="font-size:10px;" title="Signé le ${new Date(c.signed_at).toLocaleDateString('fr-CA')} par ${c.signed_by_name||''}">✓ ${new Date(c.signed_at).toLocaleDateString('fr-CA')}</span>`
         : `<span class="badge badge-gray" style="font-size:10px;">Non signé</span>`;
-      const canTerminate = c.status === 'active' || c.status === 'suspended';
-      const canSuspend   = c.status === 'active';
+      const canTerminate  = c.status === 'active' || c.status === 'suspended';
+      const canSuspend    = c.status === 'active';
       const canReactivate = c.status === 'suspended';
-      rows.push(`<tr style="${c.status === 'terminated' ? 'opacity:.5' : c.status === 'suspended' ? 'opacity:.7' : ''}">
+      const todayStr = new Date().toISOString().slice(0,10);
+      const paidLate  = c.paid_until && c.paid_until < todayStr;
+      const paidBadge = c.paid_until
+        ? `<span class="badge ${paidLate ? 'badge-red' : 'badge-green'}" style="font-size:10px;">${paidLate ? '⚠ Impayé depuis ' + c.paid_until : '✓ ' + c.paid_until}</span>`
+        : `<span class="badge badge-gray" style="font-size:10px;">—</span>`;
+      rows.push(`<tr style="${c.status === 'terminated' ? 'opacity:.5' : (c.status === 'suspended' || paidLate) ? 'background:rgba(224,112,96,.06);' : ''}">
         <td style="padding-left:28px;"><strong>${resName}</strong><br><span style="font-size:11px;color:var(--text3)">${resEmail}</span></td>
         <td>${planLabels[c.plan] || c.plan || '—'}</td>
         <td style="font-size:12px">${c.starts_at || '—'}</td>
         <td style="font-size:12px">${c.ends_at || '∞'}</td>
         <td><span class="badge ${statusColors[c.status] || 'badge-gray'}">${statusLabels[c.status] || c.status}</span></td>
-        <td>${signedBadge}</td>
+        <td>${paidBadge}</td>
         <td><div class="td-actions">
-          <button class="btn btn-info btn-sm" onclick="showClientContracts('${c.client_id}', '${resName.replace(/'/g, "\\'")}', 'resident')">📄 Contrat</button>
-          <button class="btn btn-secondary btn-sm" onclick="editContract('${c.id}')">Modifier</button>
-          ${canSuspend    ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}')">⏸ Suspendre</button>` : ''}
-          ${canReactivate ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}')">▶ Réactiver</button>` : ''}
+          <button class="btn btn-info btn-sm" onclick="showClientContracts('${c.client_id}', '${resName.replace(/'/g, "\'")}', 'resident')">📄 Contrat</button>
+          <button class="btn btn-success btn-sm" onclick="renewPayment('${c.id}')">💳 +1 mois</button>
+          ${canSuspend && paidLate ? `<button class="btn btn-warning btn-sm" onclick="suspendForNonPayment('${c.id}')">🔒 Suspendre</button>` : ''}
+          ${canReactivate ? `<button class="btn btn-warning btn-sm" onclick="suspendForNonPayment('${c.id}')">🔒 Suspendre</button>` : ''}
           ${canTerminate  ? `<button class="btn btn-danger btn-sm" onclick="terminateContract('${c.id}')">Résilier</button>` : ''}
         </div></td>
       </tr>`);
