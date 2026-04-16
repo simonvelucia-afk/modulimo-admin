@@ -525,6 +525,7 @@
       <div class="form-group"><label>Client</label><select id="lic-client"></select></div>
       <div class="form-group"><label>Domaine</label><input id="lic-domain" placeholder="cohabitat.monprojet.com"></div>
       <div class="form-group"><label>URL Supabase du client</label><input id="lic-url" placeholder="https://xxx.supabase.co"></div>
+      <div class="form-group"><label>Clé anon Supabase du client</label><input id="lic-anon" placeholder="eyJ..." style="font-size:11px;font-family:monospace"></div>
       <div class="form-group"><label>Plan</label>
         <select id="lic-plan">
           <option value="starter">Starter (≤20 unités)</option>
@@ -2067,7 +2068,7 @@ async function loadLicences() {
 
 async function openLicenceModal() {
   await populateClientSelect();
-  ['lic-id','lic-domain','lic-url','lic-notes'].forEach(id => document.getElementById(id).value = '');
+  ['lic-id','lic-domain','lic-url','lic-anon','lic-notes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('lic-plan').value = 'starter';
   document.getElementById('lic-units').value = '20';
   document.getElementById('lic-expires').value = '';
@@ -2090,6 +2091,7 @@ async function editLicence(l) {
   document.getElementById('lic-client').value  = l.client_id;
   document.getElementById('lic-domain').value  = l.domain;
   document.getElementById('lic-url').value     = l.supabase_url || '';
+  document.getElementById('lic-anon').value    = l.anon_key || '';
   document.getElementById('lic-plan').value    = l.plan;
   document.getElementById('lic-units').value   = l.max_units;
   document.getElementById('lic-expires').value = l.expires_at ? l.expires_at.slice(0,10) : '';
@@ -2116,6 +2118,7 @@ async function saveLicence() {
     client_id:    document.getElementById('lic-client').value,
     domain:       document.getElementById('lic-domain').value.trim(),
     supabase_url: document.getElementById('lic-url').value.trim(),
+    anon_key:     document.getElementById('lic-anon').value.trim() || null,
     plan:         document.getElementById('lic-plan').value,
     max_units:    parseInt(document.getElementById('lic-units').value) || 20,
     expires_at:   document.getElementById('lic-expires').value || null,
