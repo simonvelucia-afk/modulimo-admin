@@ -1114,13 +1114,13 @@ async function renewPayment(contractId) {
   if (error) { toast('Erreur: ' + error.message, 'error'); return; }
   // Si réactivation, propager vers CoHabitat
   if (c.status === 'suspended') await propagateStatusToCoHabitat(contractId, true);
-  toast('✓ Paiement enregistré — accès actif jusqu'au ' + newPaidUntil, 'success');
+  toast('\u2713 Paiement enregistr\u00e9 \u2014 acc\u00e8s actif jusqu\'au ' + newPaidUntil, 'success');
   loadContracts();
 }
 
 // Suspendre pour non-paiement
 async function suspendForNonPayment(contractId) {
-  if (!confirm('Suspendre l'accès pour non-paiement ?')) return;
+  if (!confirm('Suspendre l\'acc\u00e8s pour non-paiement ?')) return;
   const { error } = await sb.from('contracts').update({ status: 'suspended' }).eq('id', contractId);
   if (error) { toast('Erreur: ' + error.message, 'error'); return; }
   const { data: c } = await sb.from('contracts').select('client_id').eq('id', contractId).single();
