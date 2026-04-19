@@ -1004,8 +1004,12 @@ async function sendContractEmail(to, name, type, details) {
       </div>`,
   };
 
+  if(!RESEND_KEY) {
+    console.warn('[email] RESEND_KEY manquante dans app_config — aucun email envoyé');
+    return { ok: false, error: 'RESEND_KEY manquante (app_config)' };
+  }
   try {
-    await fetch('https://api.resend.com/emails', {
+    const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Authorization': 'Bearer ' + RESEND_KEY,
@@ -1018,9 +1022,16 @@ async function sendContractEmail(to, name, type, details) {
         html: bodies[type]
       })
     });
+    if(!res.ok) {
+      const body = await res.text();
+      console.warn('[email] Resend HTTP ' + res.status + ':', body);
+      return { ok: false, error: 'Resend ' + res.status + ': ' + body.slice(0,140) };
+    }
     console.log('[email] Envoyé à', to, '— type:', type);
+    return { ok: true };
   } catch(e) {
     console.warn('[email] Erreur envoi:', e.message);
+    return { ok: false, error: e.message };
   }
 }
 
@@ -1074,14 +1085,18 @@ async function sendSignatureLink(contractId, btn) {
 
     const url = SIGN_BASE_URL + '?token=' + encodeURIComponent(token);
 
-    await sendContractEmail(
+    const mail = await sendContractEmail(
       signer.contact_email,
       signer.contact_name || signer.name || 'Client',
       'signature_request',
       { url, building: buildingName, contractType: c.type, expiresDays: SIGN_EXPIRY_DAYS }
     );
 
-    toast('✍ Lien de signature envoyé à ' + signer.contact_email, 'success');
+    if(mail && mail.ok === false) {
+      toast('⚠ Lien créé mais email NON envoyé : ' + mail.error, 'error');
+    } else {
+      toast('✍ Lien de signature envoyé à ' + signer.contact_email, 'success');
+    }
   } catch(e) {
     console.error('[sendSignatureLink]', e);
     toast('Erreur: ' + e.message, 'error');
