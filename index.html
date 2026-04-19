@@ -1435,8 +1435,11 @@ async function viewInvoiceDetail(invoiceId) {
   const html = `
     <div id="modal-inv-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)this.remove()">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:640px;width:100%;max-height:90vh;overflow:auto;">
-        <div style="padding:20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
-          <h3 style="margin:0;font-size:1.05rem;">🧾 Facture ${inv.period_start} → ${inv.period_end}</h3>
+        <div style="padding:20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <img src="https://simonvelucia-afk.github.io/modulimo-home/images/favicon_Modulimo.png" alt="Modulimo" style="height:28px;width:auto;display:block;" onerror="this.style.display='none'">
+            <h3 style="margin:0;font-size:1.05rem;">🧾 Facture ${inv.period_start} → ${inv.period_end}</h3>
+          </div>
           <button class="btn btn-secondary btn-sm" onclick="document.getElementById('modal-inv-overlay').remove()">✕</button>
         </div>
         <div style="padding:20px;">
