@@ -85,6 +85,10 @@
   .toast.show { transform: translateY(0); opacity: 1; }
   .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
   .td-actions { display: flex; gap: 6px; }
+
+  /* Logo bg color (pref geree depuis CoHabitat > Mon profil, forcee rose le 8 mars) */
+  .logo-wrap { display:inline-flex; align-items:center; border-radius:6px; transition:background .2s, padding .2s; }
+  html[data-logo-colored] .logo-wrap { background:var(--logo-bg); padding:2px 10px; }
 </style>
 </head>
 <body>
@@ -92,7 +96,7 @@
 <!-- LOGIN -->
 <div id="login-page">
   <div class="login-box">
-    <div class="login-logo">MODULIMO</div>
+    <div class="login-logo"><span class="logo-wrap">MODULIMO</span></div>
     <div class="login-sub">Interface d'administration centrale</div>
     <div class="form-group">
       <label>Courriel</label>
@@ -110,7 +114,7 @@
 <!-- APP -->
 <div id="app">
   <div class="topbar">
-    <div class="topbar-brand">MODULIMO CENTRAL</div>
+    <div class="topbar-brand"><span class="logo-wrap">MODULIMO CENTRAL</span></div>
     <div class="topbar-user">
       <span id="admin-email"></span>
       <button class="btn btn-secondary btn-sm" onclick="doLogout()">Déconnexion</button>
@@ -793,8 +797,38 @@ async function doLogin() {
   document.getElementById('app').style.display = 'block';
   document.getElementById('admin-email').textContent = currentAdmin.email;
   await loadAppConfig();
+  loadAdminLogoBg();
   loadDashboard();
 }
+
+// Logo bg color : lit la preference du profil de l'admin connecte.
+// Override : le 8 mars (Journee internationale des femmes) = rose force.
+const LOGO_COLORS = {
+  red:'#e74c3c', orange:'#e67e22', yellow:'#f1c40f', green:'#27ae60',
+  blue:'#2980b9', indigo:'#5e35b1', violet:'#8e44ad', pink:'#e91e63'
+};
+function isWomensDay(d = new Date()) { return d.getMonth() === 2 && d.getDate() === 8; }
+function applyLogoBg(pref) {
+  const color = isWomensDay() ? 'pink' : pref;
+  const html = document.documentElement;
+  if (color && LOGO_COLORS[color]) {
+    html.style.setProperty('--logo-bg', LOGO_COLORS[color]);
+    html.setAttribute('data-logo-colored', '');
+  } else {
+    html.style.removeProperty('--logo-bg');
+    html.removeAttribute('data-logo-colored');
+  }
+}
+async function loadAdminLogoBg() {
+  if (isWomensDay()) { applyLogoBg(null); return; } // le setter forcera rose
+  if (!currentAdmin) return;
+  try {
+    const { data } = await sb.from('profiles').select('logo_bg_color').eq('id', currentAdmin.id).maybeSingle();
+    applyLogoBg(data?.logo_bg_color);
+  } catch (e) { /* profil absent : aucune couleur */ }
+}
+// Applique le fond des l'ouverture (gere le cas 8 mars meme sans login)
+applyLogoBg(null);
 
 async function doLogout() {
   await sb.auth.signOut();
