@@ -126,6 +126,7 @@
       <div class="nav-item" onclick="nav('networks')">🔗 Réseaux</div>
       <div class="nav-item" onclick="nav('plans')">📦 Forfaits</div>
       <div class="nav-item" onclick="nav('lunch')">🍱 Machine Lunch</div>
+      <div class="nav-item" onclick="nav('config')">⚙️ Configuration</div>
     </div>
     <div class="content">
 
@@ -282,6 +283,35 @@
         </div>
         <div class="stats-grid" id="lunch-stats-grid" style="margin-bottom:20px;"></div>
         <div id="lunch-machines-list"></div>
+      </div>
+
+      <!-- CONFIGURATION -->
+      <div id="page-config" class="page">
+        <div class="page-title">⚙️ Configuration</div>
+        <div style="background:rgba(200,169,110,.08);border:1px solid rgba(200,169,110,.25);border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:var(--text2);">
+          <span style="color:var(--accent);font-weight:600;">🎨 Thème événementiel :</span> change la couleur du logo et de l'en-tête du site <strong>modulimo.com</strong> selon l'événement courant.
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;max-width:560px;">
+          <div style="font-weight:600;margin-bottom:14px;">Thème du site public</div>
+          <div id="theme-radios" style="display:flex;flex-direction:column;gap:10px;">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;">
+              <input type="radio" name="home-theme" value="none">
+              <span><strong>Aucun</strong> — fond blanc par défaut</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;">
+              <input type="radio" name="home-theme" value="femme">
+              <span><strong>Journée de la femme</strong> — fond rose</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;">
+              <input type="radio" name="home-theme" value="terre">
+              <span><strong>Journée de la Terre</strong> — fond vert, texte rouge</span>
+            </label>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:20px;">
+            <button class="btn btn-primary" onclick="saveHomeTheme()">Enregistrer</button>
+            <span id="theme-status" style="font-size:12px;color:var(--text3);"></span>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -815,6 +845,33 @@ function nav(page) {
   if (page === 'networks')  loadNetworks();
   if (page === 'plans')     loadPlans();
   if (page === 'lunch')     loadLunch();
+  if (page === 'config')    loadHomeTheme();
+}
+
+async function loadHomeTheme() {
+  const status = document.getElementById('theme-status');
+  try {
+    const { data } = await sb.from('app_config').select('value').eq('key', 'home_theme').maybeSingle();
+    const current = (data && data.value) || 'none';
+    const radio = document.querySelector(`input[name="home-theme"][value="${current}"]`);
+    if (radio) radio.checked = true;
+    if (status) status.textContent = '';
+  } catch (e) {
+    if (status) { status.textContent = 'Erreur : ' + e.message; status.style.color = 'var(--accent3)'; }
+  }
+}
+
+async function saveHomeTheme() {
+  const status = document.getElementById('theme-status');
+  const selected = document.querySelector('input[name="home-theme"]:checked');
+  if (!selected) { if (status) { status.textContent = 'Sélectionne un thème.'; status.style.color = 'var(--accent3)'; } return; }
+  try {
+    const { error } = await sb.from('app_config').upsert({ key: 'home_theme', value: selected.value }, { onConflict: 'key' });
+    if (error) throw error;
+    if (status) { status.textContent = '✓ Enregistré'; status.style.color = 'var(--text2)'; }
+  } catch (e) {
+    if (status) { status.textContent = 'Erreur : ' + e.message; status.style.color = 'var(--accent3)'; }
+  }
 }
 
 // DASHBOARD
