@@ -1004,33 +1004,26 @@ async function sendContractEmail(to, name, type, details) {
       </div>`,
   };
 
-  if(!RESEND_KEY) {
-    console.warn('[email] RESEND_KEY manquante dans app_config — aucun email envoyé');
-    return { ok: false, error: 'RESEND_KEY manquante (app_config)' };
-  }
+  // On passe par l'Edge Function Supabase 'send-email' — l'appel direct à
+  // api.resend.com est bloqué par CORS depuis le navigateur. La clé Resend
+  // reste côté serveur (secret de la fonction).
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + RESEND_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from: RESEND_FROM,
-        to: [to],
-        subject: subjects[type],
-        html: bodies[type]
-      })
+    const { data, error } = await sb.functions.invoke('send-email', {
+      body: { to, subject: subjects[type], html: bodies[type] }
     });
-    if(!res.ok) {
-      const body = await res.text();
-      console.warn('[email] Resend HTTP ' + res.status + ':', body);
-      return { ok: false, error: 'Resend ' + res.status + ': ' + body.slice(0,140) };
+    if(error) {
+      console.warn('[email] Edge function error:', error.message);
+      return { ok: false, error: error.message };
+    }
+    if(data && data.ok === false) {
+      const msg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error).slice(0,140);
+      console.warn('[email] Resend rejet:', data.status, msg);
+      return { ok: false, error: 'Resend ' + (data.status || '') + ': ' + msg };
     }
     console.log('[email] Envoyé à', to, '— type:', type);
     return { ok: true };
   } catch(e) {
-    console.warn('[email] Erreur envoi:', e.message);
+    console.warn('[email] Exception:', e.message);
     return { ok: false, error: e.message };
   }
 }
