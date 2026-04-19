@@ -890,6 +890,7 @@ async function sendContractEmail(to, name, type, details) {
     terminated:  'Votre accès CoHabitat a été résilié',
     owner_activated:  'Contrat Modulimo activé — ' + details.building,
     owner_terminated: 'Contrat Modulimo résilié — ' + details.building,
+    signature_request: 'Signature requise — votre contrat ' + (details.building || ''),
   };
   const bodies = {
     activated: `
@@ -938,6 +939,18 @@ async function sendContractEmail(to, name, type, details) {
         <p style="color:#9a9890;font-size:14px;">Tous les accès résidents liés à cet immeuble ont également été résiliés. Contactez Modulimo pour plus d'information.</p>
         <p style="margin-top:24px;font-size:12px;color:#5a5856;">Modulimo Central</p>
       </div>`,
+    signature_request: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#0f0f0f;color:#e8e6df;padding:32px;border-radius:12px;">
+        <h2 style="color:#c8a96e;margin:0 0 16px;">📄 Signature de contrat requise</h2>
+        <p>Bonjour <strong>${name}</strong>,</p>
+        <p>Votre contrat ${details.contractType === 'owner' ? 'de propriétaire' : 'de résident'} pour <strong>${details.building || '—'}</strong> est prêt à être signé.</p>
+        <p style="color:#9a9890;font-size:14px;">Cliquez sur le lien ci-dessous pour consulter les termes et apposer votre signature électronique. Ce lien est personnel, sécurisé et valide ${details.expiresDays || 14} jours.</p>
+        <p style="text-align:center;margin:28px 0;">
+          <a href="${details.url}" style="display:inline-block;background:#c8a96e;color:#0f0f0f;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;">✍ Signer le contrat</a>
+        </p>
+        <p style="font-size:12px;color:#9a9890;word-break:break-all;">Si le bouton ne fonctionne pas, copiez ce lien : ${details.url}</p>
+        <p style="margin-top:24px;font-size:12px;color:#5a5856;">Modulimo — ce lien à usage unique expirera automatiquement après signature.</p>
+      </div>`,
   };
 
   try {
@@ -957,6 +970,72 @@ async function sendContractEmail(to, name, type, details) {
     console.log('[email] Envoyé à', to, '— type:', type);
   } catch(e) {
     console.warn('[email] Erreur envoi:', e.message);
+  }
+}
+
+// ── SIGNATURE LINK ───────────────────────────────────────────────────────────
+// Base URL de la page publique de signature. Doit pointer vers sign.html
+// hébergé dans le repo cohabitat (servi sur chaque domaine d'immeuble, ou
+// le domaine canonique ci-dessous).
+const SIGN_BASE_URL     = 'https://cohabitat.modulimo.com/sign.html';
+const SIGN_EXPIRY_DAYS  = 14;
+
+function _generateSignatureToken() {
+  // 32 octets aléatoires → base64url (~43 chars). Assez d'entropie pour un lien public.
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  let b64 = btoa(String.fromCharCode.apply(null, buf));
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Génère un lien tokenisé et l'envoie par email au signataire du contrat.
+// Utilisable pour contrats 'resident' ET 'owner'.
+async function sendSignatureLink(contractId, btn) {
+  if(btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const { data: c, error: e1 } = await sb.from('contracts')
+      .select('id, type, plan, client_id, owner_client_id, signed_at')
+      .eq('id', contractId).single();
+    if(e1 || !c) throw new Error(e1?.message || 'Contrat introuvable');
+    if(c.signed_at) { toast('Ce contrat est déjà signé', 'error'); return; }
+
+    const { data: signer } = await sb.from('clients')
+      .select('name, contact_email, contact_name')
+      .eq('id', c.client_id).single();
+    if(!signer?.contact_email) { toast('Aucun courriel pour ce client', 'error'); return; }
+
+    let buildingName = '';
+    if(c.owner_client_id) {
+      const { data: own } = await sb.from('clients').select('name').eq('id', c.owner_client_id).single();
+      buildingName = own?.name || '';
+    } else if(c.type === 'owner') {
+      buildingName = signer.name || '';
+    }
+
+    const token   = _generateSignatureToken();
+    const expires = new Date(Date.now() + SIGN_EXPIRY_DAYS * 86400000).toISOString();
+
+    const { error: e2 } = await sb.from('contracts').update({
+      signature_token:            token,
+      signature_token_expires_at: expires
+    }).eq('id', contractId);
+    if(e2) throw new Error('Erreur token: ' + e2.message);
+
+    const url = SIGN_BASE_URL + '?token=' + encodeURIComponent(token);
+
+    await sendContractEmail(
+      signer.contact_email,
+      signer.contact_name || signer.name || 'Client',
+      'signature_request',
+      { url, building: buildingName, contractType: c.type, expiresDays: SIGN_EXPIRY_DAYS }
+    );
+
+    toast('✍ Lien de signature envoyé à ' + signer.contact_email, 'success');
+  } catch(e) {
+    console.error('[sendSignatureLink]', e);
+    toast('Erreur: ' + e.message, 'error');
+  } finally {
+    if(btn) { btn.disabled = false; btn.textContent = '✍ Lien signature'; }
   }
 }
 
@@ -1184,6 +1263,7 @@ async function loadContracts() {
         ${group.ownerContract
           ? `<span class="badge ${statusColors[group.ownerContract.status] || 'badge-gray'}" style="margin-left:10px;font-size:10px;">Contrat proprio: ${statusLabels[group.ownerContract.status] || group.ownerContract.status}</span>
              <span style="font-size:11px;color:var(--text3);margin-left:8px;">${group.ownerContract.starts_at || ''} → ${group.ownerContract.ends_at || '∞'}</span>
+             ${!group.ownerContract.signed_at ? `<button class="btn btn-info btn-sm" style="margin-left:8px;font-size:10px;" onclick="sendSignatureLink('${group.ownerContract.id}', this)">✍ Lien signature</button>` : `<span class="badge badge-green" style="margin-left:8px;font-size:10px;" title="Signé le ${new Date(group.ownerContract.signed_at).toLocaleDateString('fr-CA')} par ${group.ownerContract.signed_by_name||''}">✓ Signé</span>`}
              <button class="btn btn-danger btn-sm" style="margin-left:8px;font-size:10px;" onclick="terminateContract('${group.ownerContract.id}')">Résilier</button>`
           : `<button class="btn btn-primary btn-sm" style="margin-left:10px;font-size:10px;" onclick="openContractForClient('${ownId}', 'owner')">+ Contrat proprio</button>`}
       </td>
@@ -1213,6 +1293,7 @@ async function loadContracts() {
         <td>${paidBadge}</td>
         <td><div class="td-actions">
           <button class="btn btn-info btn-sm" onclick="showClientContracts('${c.client_id}', '${resName.replace(/'/g, "\'")}', 'resident')">📄 Contrat</button>
+          ${!c.signed_at && c.status !== 'terminated' ? `<button class="btn btn-info btn-sm" onclick="sendSignatureLink('${c.id}', this)">✍ Lien signature</button>` : ''}
           <button class="btn btn-success btn-sm" onclick="renewPayment('${c.id}')">💳 +1 mois</button>
           ${canSuspend && paidLate ? `<button class="btn btn-warning btn-sm" onclick="suspendForNonPayment('${c.id}')">🔒 Suspendre</button>` : ''}
           ${canReactivate ? `<button class="btn btn-warning btn-sm" onclick="suspendForNonPayment('${c.id}')">🔒 Suspendre</button>` : ''}
@@ -1241,6 +1322,7 @@ async function loadContracts() {
         <td>${signedBadge}</td>
         <td><div class="td-actions">
           <button class="btn btn-info btn-sm" onclick="showClientContracts('${c.client_id}', '${(resClient.contact_name || resClient.name || '').replace(/'/g, "\\'")}', 'resident')">📄 Contrat</button>
+          ${!c.signed_at && c.status !== 'terminated' ? `<button class="btn btn-info btn-sm" onclick="sendSignatureLink('${c.id}', this)">✍ Lien signature</button>` : ''}
           <button class="btn btn-secondary btn-sm" onclick="editContract('${c.id}')">Modifier</button>
           ${c.status === 'active' ? `<button class="btn btn-warning btn-sm" onclick="suspendContract('${c.id}')">⏸ Suspendre</button>` : ''}
           ${c.status === 'suspended' ? `<button class="btn btn-success btn-sm" onclick="reactivateContract('${c.id}')">▶ Réactiver</button>` : ''}
@@ -1730,6 +1812,7 @@ async function ccmLoadContracts(clientId, clientName, clientType) {
         <td style="padding:10px;"><span class="badge ${statusColors[c.status]||'badge-gray'}">${statusLabels[c.status]||c.status}</span></td>
         <td style="padding:10px;">${signedBadge}</td>
         <td style="padding:10px;"><div class="td-actions">
+          ${!c.signed_at && c.status !== 'terminated' ? `<button class="btn btn-info btn-sm" title="Envoyer lien de signature" onclick="sendSignatureLink('${c.id}', this)">✍</button>` : ''}
           ${canSuspend    ? `<button class="btn btn-warning btn-sm" title="Suspendre" onclick="suspendContract('${c.id}').then(()=>ccmLoadContracts('${clientId}','${clientName}','${clientType}'))">⏸</button>` : ''}
           ${canReactivate ? `<button class="btn btn-success btn-sm" title="Réactiver" onclick="reactivateContract('${c.id}').then(()=>ccmLoadContracts('${clientId}','${clientName}','${clientType}'))">▶</button>` : ''}
           ${canTerminate  ? `<button class="btn btn-danger btn-sm" title="Résilier" onclick="terminateContract('${c.id}').then(()=>ccmLoadContracts('${clientId}','${clientName}','${clientType}'))">✕</button>` : ''}
