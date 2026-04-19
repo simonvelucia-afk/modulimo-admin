@@ -3062,9 +3062,41 @@ function toast(msg, type = 'success') {
 // ═══════════════════════════════════════════════════════════
 //  MACHINE LUNCH
 // ═══════════════════════════════════════════════════════════
-// sbLM pointe vers modulimo-central (même Supabase que sb)
-const sbLM = sb; // lunch_machines/slots/zones sont dans modulimo-central
+// sbLM pointe vers modulimo-central : y vivent la config machine
+// (lunch_machines, lunch_zones, lunch_slots, lunch_menus).
+// Les lunch_transactions vivent dans chaque Supabase d'immeuble (= la ou
+// sont profiles/dependents/balances). On les agrege via les licences.
+const sbLM = sb;
 const KIOSK_BASE = 'https://simonvelucia-afk.github.io/LunchMachine/';
+
+// Agrege les lunch_transactions de tous les immeubles via la table licences.
+// Chaque licence fournit supabase_url + anon_key de son immeuble.
+// machineIdFilter (optionnel) : restreint a une machine precise.
+// sinceIso (optionnel) : borne created_at >= cette date ISO.
+async function fetchLunchTxFromAllBuildings(machineIdFilter, sinceIso) {
+  const { data: licences } = await sb.from('licences')
+    .select('supabase_url, anon_key')
+    .eq('active', true);
+  const seen = new Set(); // dedup par supabase_url (plusieurs licences peuvent partager)
+  const all = [];
+  for (const lic of (licences || [])) {
+    if (!lic.supabase_url || !lic.anon_key) continue;
+    if (seen.has(lic.supabase_url)) continue;
+    seen.add(lic.supabase_url);
+    try {
+      let q = '/rest/v1/lunch_transactions?select=*&order=created_at.desc';
+      if (machineIdFilter) q += '&machine_id=eq.' + encodeURIComponent(machineIdFilter);
+      if (sinceIso)        q += '&created_at=gte.' + encodeURIComponent(sinceIso);
+      const res = await fetch(lic.supabase_url + q, {
+        headers: { apikey: lic.anon_key, Authorization: 'Bearer ' + lic.anon_key }
+      });
+      if (!res.ok) continue;
+      const rows = await res.json();
+      if (Array.isArray(rows)) all.push(...rows);
+    } catch (e) { /* silencieux : un immeuble indisponible ne bloque pas les autres */ }
+  }
+  return all;
+}
 
 async function loadLunch() {
   const statsGrid = document.getElementById('lunch-stats-grid');
@@ -3077,8 +3109,9 @@ async function loadLunch() {
     if(error) throw error;
 
     const { data: slots } = await sbLM.from('lunch_slots').select('machine_id, description, reserved, price');
-    const { data: transactions } = await sbLM.from('lunch_transactions').select('machine_id, price, created_at')
-      .gte('created_at', new Date(Date.now() - 30*24*3600*1000).toISOString());
+    // lunch_transactions vit sur chaque Supabase d'immeuble : on agrege via les licences
+    const since30 = new Date(Date.now() - 30*24*3600*1000).toISOString();
+    const transactions = await fetchLunchTxFromAllBuildings(null, since30);
 
     const totalMachines = machines ? machines.length : 0;
     const totalSlots    = slots ? slots.length : 0;
@@ -3152,8 +3185,10 @@ async function viewLunchSlots(machineId, machineName) {
 }
 
 async function viewLunchTransactions(machineId, machineName) {
-  const { data: txs } = await sbLM.from('lunch_transactions').select('*').eq('machine_id', machineId)
-    .order('created_at', { ascending: false }).limit(50);
+  // lunch_transactions : stockees sur l'immeuble proprietaire, pas sur central.
+  // On agrege puis on garde les 50 plus recentes.
+  const all = await fetchLunchTxFromAllBuildings(machineId, null);
+  const txs = all.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 50);
   const rows = (txs||[]).map(t => `
     <tr>
       <td style="font-size:11px;">${new Date(t.created_at).toLocaleString('fr-CA')}</td>
