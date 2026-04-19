@@ -91,11 +91,17 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_inv RECORD;
+  v_status      text;
+  v_contract_id uuid;
+  v_period_end  date;
 BEGIN
-  SELECT * INTO v_inv FROM invoices WHERE id = p_invoice_id;
+  SELECT status, contract_id, period_end
+    INTO v_status, v_contract_id, v_period_end
+    FROM invoices
+   WHERE id = p_invoice_id;
+
   IF NOT FOUND THEN RAISE EXCEPTION 'Facture introuvable'; END IF;
-  IF v_inv.status = 'paid' THEN RAISE EXCEPTION 'Facture déjà payée'; END IF;
+  IF v_status = 'paid' THEN RAISE EXCEPTION 'Facture déjà payée'; END IF;
 
   UPDATE invoices
      SET status      = 'paid',
@@ -103,14 +109,14 @@ BEGIN
          paid_method = COALESCE(p_method, 'cash'),
          paid_by     = p_paid_by,
          notes       = CASE WHEN p_notes IS NULL OR p_notes = '' THEN notes
-                            ELSE COALESCE(notes || E'\n', '') || p_notes END,
+                            ELSE COALESCE(notes || chr(10), '') || p_notes END,
          updated_at  = now()
    WHERE id = p_invoice_id;
 
   UPDATE contracts
-     SET paid_until = GREATEST(COALESCE(paid_until, '1970-01-01'::date), v_inv.period_end),
+     SET paid_until = GREATEST(COALESCE(paid_until, '1970-01-01'::date), v_period_end),
          status     = CASE WHEN status = 'suspended' THEN 'active' ELSE status END
-   WHERE id = v_inv.contract_id;
+   WHERE id = v_contract_id;
 
   RETURN p_invoice_id;
 END;
