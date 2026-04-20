@@ -1,0 +1,40 @@
+-- Template : inscrire un immeuble dans le registre central.
+-- A executer sur la DB centrale bpxscgrbxjscicpnheep apres avoir
+-- applique la migration sql/007_finance_central_phase1.sql.
+--
+-- Avant de lancer :
+--   1. Remplacer <PROJECT_REF> par le ref Supabase du projet immeuble
+--      (ex: uwyhrdjlwetcbtskijrs pour Pointe Est).
+--   2. Remplacer <NOM_IMMEUBLE> par le nom lisible.
+--   3. Verifier que le JWKS endpoint retourne bien une liste de cles non
+--      vide :
+--        curl -s https://<PROJECT_REF>.supabase.co/auth/v1/.well-known/jwks.json | jq
+--      Si `.keys` est vide, activer l'asymetrique dans Supabase Dashboard
+--      -> Auth -> JWT Settings avant de continuer (la verification de
+--      signature est impossible sans JWKS public).
+
+BEGIN;
+
+INSERT INTO building_registry (name, supabase_url, jwt_issuer, jwks_url, status)
+VALUES (
+  '<NOM_IMMEUBLE>',
+  'https://<PROJECT_REF>.supabase.co',
+  'https://<PROJECT_REF>.supabase.co/auth/v1',
+  'https://<PROJECT_REF>.supabase.co/auth/v1/.well-known/jwks.json',
+  'active'
+)
+RETURNING id, name;
+
+-- Apres INSERT, noter le `id` retourne : il servira a backfiller
+-- clients.building_id pour les residents de cet immeuble.
+-- Exemple de backfill (a adapter) :
+--
+--   UPDATE clients
+--      SET building_id = '<BUILDING_ID_RETOURNE>'
+--    WHERE id IN (
+--      SELECT DISTINCT client_id
+--        FROM contracts
+--       WHERE ... -- critere qui identifie les contrats de cet immeuble
+--    );
+
+COMMIT;
