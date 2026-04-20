@@ -10,15 +10,20 @@ central). Ce README couvre uniquement le déploiement et le test.
 
 ## Statut
 
-- **Phase 0** : `/get-balance` stub retourne `virtual_balance: 0.00`.
-  L'objectif est de prouver le chemin d'auth bout-en-bout.
-- **Phase 1+** : branche les RPC centrales réelles (`get_balance`,
-  `list_transactions`, etc.).
+- **Phase 0** ✅ squelette d'auth + 9 scénarios de fuite en CI.
+- **Phase 1** ✅ migration SQL `sql/007_finance_central_phase1.sql` +
+  `/get-balance` branché sur la RPC centrale `get_balance`. Renvoie
+  `{ virtual_balance, source_kind, updated_at }` ; `source_kind='missing'`
+  signifie que le client n'a pas encore de row `balances` (traité comme 0).
+- **Phase 2+** : RPC mutants (`lunch_purchase`, `adjust_balance`,
+  `trip_book_network`, `record_real_payment`) à ajouter.
 
 ## Pré-requis côté base centrale
 
-La migration `building_registry` + `clients.building_id` doit être
-déployée avant que cette fonction serve du trafic réel (Phase 0 step 1).
+Déployer `sql/007_finance_central_phase1.sql` avant d'activer la
+fonction : elle crée `building_registry`, `clients.building_id`,
+`balances`, `dependent_balances`, `transactions`, et la RPC
+`get_balance`.
 
 Chaque immeuble inscrit doit exposer un JWKS ES256/RS256 — Supabase Auth
 doit être configuré avec une clé asymétrique (sinon on ne peut pas
@@ -73,16 +78,22 @@ const { data, error } = await sb.functions.invoke('finance-bridge/get-balance', 
 });
 ```
 
-Réponse (Phase 0) :
+Réponse :
 ```json
 {
   "client_id": "...",
   "building_id": "...",
   "dependent_id": null,
-  "virtual_balance": 0.00,
-  "source": "central"
+  "virtual_balance": 42.00,
+  "source": "central",
+  "source_kind": "main",
+  "updated_at": "2026-04-20T10:00:00Z"
 }
 ```
+
+`source_kind` vaut `main` (solde principal), `dependent` (solde d'un
+dépendant identifié par `dependent_id`), ou `missing` (pas encore
+provisionné → `virtual_balance = 0.00`).
 
 ## Tests locaux
 
@@ -130,6 +141,13 @@ Puis backfiller `clients.building_id` pour les résidents de cet immeuble.
 
 ## Prochaine étape
 
-Phase 1 : écrire la migration SQL `building_registry` + `clients.building_id`
-+ les RPC `get_balance` et `list_transactions`, puis brancher
-`handlers/get_balance.ts` dessus.
+Phase 2 : RPC mutants côté central.
+1. `adjust_balance(p_amount, p_type, p_reference, p_idem_key)` — mouvement
+   atomique avec idempotency key, update `balances` + insert `transactions`.
+2. `lunch_purchase(p_machine_id, p_slot_id, p_amount, p_dep_id, p_idem_key)`
+   — remplace la RPC locale CoHabitat, gère le fail-closed si solde
+   insuffisant.
+3. `record_real_payment(p_client_id, p_amount_real, p_amount_virtual,
+   p_method)` — crédit admin, lie une entrée `real_payments` à une ligne
+   `transactions`.
+4. Dual-write depuis CoHabitat pendant la phase de bascule.

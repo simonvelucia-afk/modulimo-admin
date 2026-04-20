@@ -74,7 +74,19 @@ Deno.test('fuite #3 : JWT valide de A mais body reclame le client de B => CLIENT
   const resolved = await resolveClaims(token, deps);
   assertEquals(resolved.ok, true);
   if (!resolved.ok) return;
-  const out = handleGetBalance(resolved.claims, { client_id: 'client-b-uuid' });
+  // Caller qui throw si on l'appelle : le mismatch doit etre detecte AVANT
+  // toute requete centrale pour eviter de log inutilement une tentative.
+  const rejectingCaller = {
+    callRpc() {
+      throw new Error('RPC ne doit pas etre appele apres un mismatch');
+    },
+  };
+  const out = await handleGetBalance(
+    resolved.claims,
+    { client_id: 'client-b-uuid' },
+    rejectingCaller,
+    'unused-jwt',
+  );
   assertEquals(out.status, 403);
   assertEquals((out.body as { error: string }).error, 'CLIENT_ID_MISMATCH');
 });

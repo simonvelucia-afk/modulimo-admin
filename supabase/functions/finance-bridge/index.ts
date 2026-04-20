@@ -26,6 +26,7 @@ import {
   makeFindBuildingByIssuer,
   makeFindClient,
 } from './lib/registry.ts';
+import { makePostgrestCaller } from './lib/central.ts';
 import { handleGetBalance } from './handlers/get_balance.ts';
 import { log, requestId } from './lib/logger.ts';
 
@@ -52,6 +53,8 @@ const deps = {
   findClient: makeFindClient(CENTRAL_URL, SERVICE_ROLE),
   getKeyResolver: jwksResolverFor,
 };
+
+const caller = makePostgrestCaller(CENTRAL_URL, ANON_KEY);
 
 // Liste blanche des endpoints exposes. Toute route inconnue retourne 404.
 type EndpointName = 'get-balance';
@@ -96,19 +99,23 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Mint du JWT central — utilise par les handlers Phase 1+ pour parler a
-  // PostgREST. En Phase 0 on le mint quand meme pour prouver que le chemin
-  // marche bout en bout et pour pousser les tests sur ce cote.
+  // Mint du JWT central utilise par PostgREST pour valider les claims.
   const centralJwt = await mintCentralJwt(resolved.claims, { secret: secretFromEnv() });
 
   switch (endpoint) {
     case 'get-balance': {
-      const result = handleGetBalance(resolved.claims, body as never);
-      log('info', 'get_balance_ok', {
+      const result = await handleGetBalance(
+        resolved.claims,
+        body as never,
+        caller,
+        centralJwt,
+      );
+      log('info', 'get_balance_done', {
         rid,
+        endpoint,
+        status: result.status,
         building_id: resolved.claims.building_id,
         client_id: resolved.claims.client_id,
-        minted_jwt_len: centralJwt.length,
       });
       return json(result.body, result.status);
     }
