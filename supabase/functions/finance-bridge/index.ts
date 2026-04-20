@@ -48,7 +48,28 @@ function json(body: unknown, status = 200) {
 
 const CENTRAL_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+// Supabase est cense auto-injecter SUPABASE_SERVICE_ROLE_KEY mais en
+// pratique le comportement varie selon la version du runtime + l'usage
+// de --no-verify-jwt. On accepte un fallback explicite via
+// FINANCE_SERVICE_ROLE_KEY (a definir via supabase secrets set si besoin).
+const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  || Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
+  || '';
+
+// Log de diagnostic au boot : on affiche la LONGUEUR des variables (pas
+// leur valeur) pour detecter un SERVICE_ROLE vide sans jamais logger la
+// cle elle-meme.
+log('info', 'finance_bridge_boot', {
+  has_url: CENTRAL_URL.length > 0,
+  url_host: CENTRAL_URL ? new URL(CENTRAL_URL).host : null,
+  anon_len: ANON_KEY.length,
+  service_role_len: SERVICE_ROLE.length,
+  service_role_source: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    ? 'auto'
+    : Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
+      ? 'secret'
+      : 'missing',
+});
 
 const deps = {
   findBuildingByIssuer: makeFindBuildingByIssuer(CENTRAL_URL, ANON_KEY),
@@ -103,6 +124,15 @@ Deno.serve(async (req) => {
     } catch {
       return json({ error: 'INVALID_JSON', rid }, 400);
     }
+  }
+
+  if (!SERVICE_ROLE) {
+    log('error', 'service_role_missing', { rid });
+    return json({
+      error: 'SERVICE_ROLE_MISSING',
+      rid,
+      hint: 'set supabase secrets set FINANCE_SERVICE_ROLE_KEY=<service_role_key>',
+    }, 500);
   }
 
   switch (endpoint) {
