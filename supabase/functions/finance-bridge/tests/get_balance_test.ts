@@ -36,7 +36,11 @@ Deno.test('get-balance : happy path solde principal', async () => {
   assertEquals((out.body as { virtual_balance: number }).virtual_balance, 42);
   assertEquals((out.body as { source_kind: string }).source_kind, 'main');
   assertEquals(caller.calls[0].name, 'get_balance');
-  assertEquals(caller.calls[0].params, { p_external_dep_id: null });
+  assertEquals(caller.calls[0].params, {
+    p_client_id: 'client-a-uuid',
+    p_building_id: 'building-a-uuid',
+    p_external_dep_id: null,
+  });
   assertEquals(caller.calls[0].jwt, 'jwt-central');
 });
 
@@ -58,7 +62,11 @@ Deno.test('get-balance : dependent_id passe en parametre RPC', async () => {
   }));
   const out = await handleGetBalance(CLAIMS, { dependent_id: 'dep-42' }, caller, 'jwt');
   assertEquals(out.status, 200);
-  assertEquals(caller.calls[0].params, { p_external_dep_id: 'dep-42' });
+  assertEquals(caller.calls[0].params, {
+    p_client_id: 'client-a-uuid',
+    p_building_id: 'building-a-uuid',
+    p_external_dep_id: 'dep-42',
+  });
   assertEquals((out.body as { dependent_id: string }).dependent_id, 'dep-42');
 });
 

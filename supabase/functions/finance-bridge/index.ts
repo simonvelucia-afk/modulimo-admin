@@ -15,16 +15,14 @@
 // Variables env requises :
 //   SUPABASE_URL               Central project URL (preset par Supabase)
 //   SUPABASE_ANON_KEY          Lecture building_registry (preset par Supabase)
-//   SUPABASE_SERVICE_ROLE_KEY  Lecture clients (preset par Supabase)
-//   FINANCE_JWT_SECRET         Secret HS256 de la centrale pour minter
-//                              le JWT passe a PostgREST. A definir via :
-//                                supabase secrets set FINANCE_JWT_SECRET=...
-//                              (la valeur est le JWT Secret du dashboard
-//                              Supabase -> Project Settings -> API)
+//   SUPABASE_SERVICE_ROLE_KEY  Utilise comme Bearer pour les RPC finance
+//                              (les RPC sont SECURITY DEFINER + GRANT cible
+//                              uniquement service_role). L'Edge Function
+//                              est la frontiere de confiance ; elle a deja
+//                              valide le JWT entrant avant d'appeler.
 // -----------------------------------------------------------------------
 
 import { resolveClaims } from './lib/resolve.ts';
-import { mintCentralJwt, secretFromEnv } from './lib/jwt.ts';
 import {
   jwksResolverFor,
   makeFindBuildingByIssuer,
@@ -58,6 +56,10 @@ const deps = {
   getKeyResolver: jwksResolverFor,
 };
 
+// Pour les appels RPC finance on utilise le service_role : il bypasse la
+// RLS et permet a PostgREST d'executer la RPC sans re-verifier un JWT.
+// La securite tient parce que les RPC sont GRANTed uniquement a
+// service_role et que seule cette Edge Function detient la cle.
 const caller = makePostgrestCaller(CENTRAL_URL, ANON_KEY);
 
 // Liste blanche des endpoints exposes. Toute route inconnue retourne 404.
@@ -103,16 +105,13 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Mint du JWT central utilise par PostgREST pour valider les claims.
-  const centralJwt = await mintCentralJwt(resolved.claims, { secret: secretFromEnv() });
-
   switch (endpoint) {
     case 'get-balance': {
       const result = await handleGetBalance(
         resolved.claims,
         body as never,
         caller,
-        centralJwt,
+        SERVICE_ROLE,
       );
       log('info', 'get_balance_done', {
         rid,

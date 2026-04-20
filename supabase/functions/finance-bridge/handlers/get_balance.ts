@@ -40,7 +40,11 @@ export async function handleGetBalance(
   const depId = body?.dependent_id ?? null;
   const res = await caller.callRpc<RpcRow[]>(
     'get_balance',
-    { p_external_dep_id: depId },
+    {
+      p_client_id: claims.client_id,
+      p_building_id: claims.building_id,
+      p_external_dep_id: depId,
+    },
     centralJwt,
   );
 
