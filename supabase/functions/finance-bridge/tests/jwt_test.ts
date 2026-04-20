@@ -56,3 +56,15 @@ Deno.test('secretFromEnv : erreur claire si absent', () => {
   }
   if (prev) Deno.env.set('TEST_MISSING_SECRET', prev);
 });
+
+Deno.test('secretFromEnv : nom par defaut FINANCE_JWT_SECRET', () => {
+  const prev = Deno.env.get('FINANCE_JWT_SECRET');
+  Deno.env.set('FINANCE_JWT_SECRET', 'test-value');
+  try {
+    const bytes = secretFromEnv();
+    assertEquals(new TextDecoder().decode(bytes), 'test-value');
+  } finally {
+    if (prev !== undefined) Deno.env.set('FINANCE_JWT_SECRET', prev);
+    else Deno.env.delete('FINANCE_JWT_SECRET');
+  }
+});

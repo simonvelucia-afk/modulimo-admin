@@ -62,13 +62,13 @@ pré-injectées par Supabase) :
 
 | Variable | Role |
 |---|---|
-| `SUPABASE_URL` | URL du projet central |
-| `SUPABASE_ANON_KEY` | Lecture `building_registry` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Lecture `clients` (bypass RLS) |
-| `SUPABASE_JWT_SECRET` | Signe le JWT central émis vers PostgREST |
+| `SUPABASE_URL` | URL du projet central (auto-injectée) |
+| `SUPABASE_ANON_KEY` | Lecture `building_registry` (auto-injectée) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Lecture `clients` (auto-injectée, bypass RLS) |
+| `FINANCE_JWT_SECRET` | Signe le JWT central émis vers PostgREST. À définir manuellement : `supabase secrets set FINANCE_JWT_SECRET=...` (la valeur = JWT Secret du dashboard Supabase → API) |
 
-`SUPABASE_JWT_SECRET` est le secret HS256 du projet central ; il ne
-quitte jamais cette fonction.
+Le nom `FINANCE_JWT_SECRET` évite la collision avec le préfixe `SUPABASE_*`
+réservé par la CLI.
 
 ## Appel côté client
 

@@ -16,7 +16,11 @@
 //   SUPABASE_URL               Central project URL (preset par Supabase)
 //   SUPABASE_ANON_KEY          Lecture building_registry (preset par Supabase)
 //   SUPABASE_SERVICE_ROLE_KEY  Lecture clients (preset par Supabase)
-//   SUPABASE_JWT_SECRET        Pour minter le JWT central (preset par Supabase)
+//   FINANCE_JWT_SECRET         Secret HS256 de la centrale pour minter
+//                              le JWT passe a PostgREST. A definir via :
+//                                supabase secrets set FINANCE_JWT_SECRET=...
+//                              (la valeur est le JWT Secret du dashboard
+//                              Supabase -> Project Settings -> API)
 // -----------------------------------------------------------------------
 
 import { resolveClaims } from './lib/resolve.ts';

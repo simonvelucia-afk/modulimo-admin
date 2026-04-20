@@ -31,7 +31,7 @@ export async function mintCentralJwt(
     .sign(opts.secret);
 }
 
-export function secretFromEnv(name = 'SUPABASE_JWT_SECRET'): Uint8Array {
+export function secretFromEnv(name = 'FINANCE_JWT_SECRET'): Uint8Array {
   const raw = (typeof Deno !== 'undefined' ? Deno.env.get(name) : undefined) ?? '';
   if (!raw) throw new Error(`Missing env ${name}`);
   return new TextEncoder().encode(raw);
