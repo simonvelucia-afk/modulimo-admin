@@ -1,0 +1,18 @@
+{
+  // Tasks locaux pour le developpement. En prod, Supabase ignore ce fichier
+  // et lance directement index.ts.
+  "tasks": {
+    "test": "deno test --allow-env --allow-net --no-check=remote tests/ lib/"
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": true
+  }
+}
