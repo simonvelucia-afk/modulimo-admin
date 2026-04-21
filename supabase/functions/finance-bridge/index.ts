@@ -48,27 +48,30 @@ function json(body: unknown, status = 200) {
 
 const CENTRAL_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-// Supabase est cense auto-injecter SUPABASE_SERVICE_ROLE_KEY mais en
-// pratique le comportement varie selon la version du runtime + l'usage
-// de --no-verify-jwt. On accepte un fallback explicite via
-// FINANCE_SERVICE_ROLE_KEY (a definir via supabase secrets set si besoin).
-const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  || Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
+// Priorite au secret explicite : le runtime Supabase auto-injecte
+// SUPABASE_SERVICE_ROLE_KEY au nouveau format court (sb_secret_...),
+// qui n'est PAS un JWT et que PostgREST refuse comme Bearer. Le secret
+// FINANCE_SERVICE_ROLE_KEY doit contenir la legacy service_role au
+// format JWT (eyJ...), signee avec la cle JWT precedente encore acceptee.
+const SERVICE_ROLE = Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
+  || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   || '';
 
 // Log de diagnostic au boot : on affiche la LONGUEUR des variables (pas
 // leur valeur) pour detecter un SERVICE_ROLE vide sans jamais logger la
-// cle elle-meme.
+// cle elle-meme. jwt_format distingue un JWT valide (3 parts) d'une cle
+// au format court (sb_secret_...) qui ne marchera pas en Bearer.
 log('info', 'finance_bridge_boot', {
   has_url: CENTRAL_URL.length > 0,
   url_host: CENTRAL_URL ? new URL(CENTRAL_URL).host : null,
   anon_len: ANON_KEY.length,
   service_role_len: SERVICE_ROLE.length,
-  service_role_source: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    ? 'auto'
-    : Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
-      ? 'secret'
+  service_role_source: Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
+    ? 'secret'
+    : Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+      ? 'auto'
       : 'missing',
+  service_role_jwt_format: SERVICE_ROLE.split('.').length === 3,
 });
 
 const deps = {
