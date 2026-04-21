@@ -25,6 +25,39 @@ BEGIN;
 -- Mirror de la table CoHabitat locale, mais scopee par building_id et
 -- liee via transaction_id au ledger. Permet la vue "achats recents par
 -- machine" sans scanner transactions pour filtrer type='lunch_purchase'.
+--
+-- Migration defensive : la centrale avait historiquement une table
+-- lunch_transactions avec un schema different (user_id a la place de
+-- client_id, pas de building_id). Cette table a ete rendue obsolete par
+-- 001_lunch_coherence.sql cote CoHabitat (qui a deplace l'audit dans la
+-- DB de l'immeuble). Si on la trouve, on la renomme pour preserver les
+-- donnees historiques sans bloquer la creation du nouveau schema.
+DO $rename_legacy$
+DECLARE
+  v_has_client_id boolean;
+  v_exists        boolean;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'lunch_transactions'
+  ) INTO v_exists;
+
+  IF v_exists THEN
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'lunch_transactions'
+         AND column_name = 'client_id'
+    ) INTO v_has_client_id;
+
+    IF NOT v_has_client_id THEN
+      -- Vieux schema central : renomme pour preserver l'historique
+      EXECUTE 'ALTER TABLE public.lunch_transactions RENAME TO lunch_transactions_legacy_central';
+      RAISE NOTICE 'lunch_transactions existait avec l''ancien schema — renomme en lunch_transactions_legacy_central';
+    END IF;
+  END IF;
+END $rename_legacy$;
+
 CREATE TABLE IF NOT EXISTS lunch_transactions (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   transaction_id  uuid NOT NULL REFERENCES transactions(id),
