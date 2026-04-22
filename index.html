@@ -124,6 +124,7 @@
     <div class="sidebar">
       <div class="nav-item active" onclick="nav('dashboard')">📊 Tableau de bord</div>
       <div class="nav-item" onclick="nav('clients')">🏢 Clients</div>
+      <div class="nav-item" onclick="nav('balances')">💳 Soldes</div>
       <div class="nav-item" onclick="nav('contracts')">📄 Contrats</div>
       <div class="nav-item" onclick="nav('invoices')">🧾 Factures</div>
       <div class="nav-item" onclick="nav('licences')">🗝 Licences</div>
@@ -171,6 +172,32 @@
             <tbody id="clients-tbody"></tbody>
           </table>
         </div>
+      </div>
+
+      <!-- SOLDES (Phase 3) -->
+      <div id="page-balances" class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div class="page-title" style="margin:0">Soldes résidents</div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <select id="balances-building-filter" onchange="renderBalances()" style="padding:8px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px;">
+              <option value="">Tous les immeubles</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="loadBalances()">↻ Rafraîchir</button>
+          </div>
+        </div>
+        <div class="card" style="padding:0">
+          <table>
+            <thead><tr>
+              <th>Résident</th>
+              <th>Immeuble</th>
+              <th>Courriel</th>
+              <th style="text-align:right">Solde ($)</th>
+              <th>Dernière maj</th>
+            </tr></thead>
+            <tbody id="balances-tbody"></tbody>
+          </table>
+        </div>
+        <div id="balances-summary" style="margin-top:16px;font-size:13px;color:var(--text2);"></div>
       </div>
 
       <!-- CONTRATS -->
@@ -843,6 +870,7 @@ function nav(page) {
   event.target.classList.add('active');
   if (page === 'dashboard') loadDashboard();
   if (page === 'clients')   loadClients();
+  if (page === 'balances')  loadBalances();
   if (page === 'contracts') loadContracts();
   if (page === 'invoices')  loadInvoices();
   if (page === 'licences')  loadLicences();
@@ -947,6 +975,102 @@ async function loadClients() {
   document.getElementById('clients-tbody').innerHTML = rows.join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text3)">Aucun client</td></tr>';
   // Charger les demandes en parallèle
   loadPendingRequests();
+}
+
+// ==========================================================================
+// SOLDES (Phase 3)
+// Lit balances + dependent_balances + building_registry et affiche un
+// tableau consolide. Reste en lecture seule pour l'instant — les credits
+// admin passent toujours par record_real_payment (RPC service_role-only),
+// a exposer via une Edge Function admin dans une phase suivante.
+// ==========================================================================
+let balancesCache = { main: [], dep: [], buildings: [], clients: [] };
+
+async function loadBalances() {
+  const [bal, dep, br, cli] = await Promise.all([
+    sb.from('balances').select('client_id,building_id,virtual_balance,updated_at'),
+    sb.from('dependent_balances').select('id,client_id,building_id,external_dep_id,label,virtual_balance,updated_at'),
+    sb.from('building_registry').select('id,name,status'),
+    sb.from('clients').select('id,name,contact_email,cohabitat_email'),
+  ]);
+  balancesCache = {
+    main: bal.data || [],
+    dep: dep.data || [],
+    buildings: br.data || [],
+    clients: cli.data || [],
+  };
+
+  // Popule le filtre immeuble
+  const sel = document.getElementById('balances-building-filter');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Tous les immeubles</option>'
+    + balancesCache.buildings
+        .filter(b => b.status === 'active')
+        .map(b => `<option value="${b.id}"${b.id === current ? ' selected' : ''}>${b.name}</option>`)
+        .join('');
+
+  renderBalances();
+}
+
+function renderBalances() {
+  const filter = document.getElementById('balances-building-filter').value;
+  const byClient = new Map(balancesCache.clients.map(c => [c.id, c]));
+  const byBuilding = new Map(balancesCache.buildings.map(b => [b.id, b]));
+
+  // Une ligne par (client, building) pour le solde principal
+  const rows = [];
+  let totalCents = 0;
+  let count = 0;
+  for (const b of balancesCache.main) {
+    if (filter && b.building_id !== filter) continue;
+    const c = byClient.get(b.client_id);
+    const bld = byBuilding.get(b.building_id);
+    const bal = Number(b.virtual_balance || 0);
+    totalCents += Math.round(bal * 100);
+    count++;
+    const email = c?.contact_email || c?.cohabitat_email || '—';
+    const name = c?.name || '<em style="color:var(--text3)">Client inconnu</em>';
+    const updated = b.updated_at ? new Date(b.updated_at).toLocaleString('fr-CA', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+    const balColor = bal < 0 ? 'color:var(--accent-red,#e66)' : '';
+    rows.push(`<tr>
+      <td>${name}</td>
+      <td style="color:var(--text2);font-size:13px">${bld?.name || '—'}</td>
+      <td style="color:var(--text2);font-size:13px">${email}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;${balColor}">${bal.toFixed(2)}</td>
+      <td style="color:var(--text3);font-size:12px">${updated}</td>
+    </tr>`);
+  }
+
+  // Dependents en section separee
+  const depRows = [];
+  let depTotalCents = 0;
+  for (const d of balancesCache.dep) {
+    if (filter && d.building_id !== filter) continue;
+    const c = byClient.get(d.client_id);
+    const bld = byBuilding.get(d.building_id);
+    const bal = Number(d.virtual_balance || 0);
+    depTotalCents += Math.round(bal * 100);
+    const parent = c?.name || '?';
+    const updated = d.updated_at ? new Date(d.updated_at).toLocaleString('fr-CA', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+    const balColor = bal < 0 ? 'color:var(--accent-red,#e66)' : '';
+    depRows.push(`<tr style="background:rgba(200,169,110,.03)">
+      <td style="padding-left:24px">↳ ${d.label || d.external_dep_id} <span style="color:var(--text3);font-size:11px">(dep. ${parent})</span></td>
+      <td style="color:var(--text2);font-size:13px">${bld?.name || '—'}</td>
+      <td style="color:var(--text3);font-size:12px">${d.external_dep_id}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;${balColor}">${bal.toFixed(2)}</td>
+      <td style="color:var(--text3);font-size:12px">${updated}</td>
+    </tr>`);
+  }
+
+  const allRows = rows.concat(depRows);
+  document.getElementById('balances-tbody').innerHTML =
+    allRows.join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucun solde</td></tr>';
+
+  const total = (totalCents / 100).toFixed(2);
+  const depTotal = (depTotalCents / 100).toFixed(2);
+  document.getElementById('balances-summary').innerHTML =
+    `${count} résident${count > 1 ? 's' : ''} — total principal <strong>${total} $</strong>`
+    + (depRows.length ? ` · ${depRows.length} dépendant${depRows.length > 1 ? 's' : ''} (<strong>${depTotal} $</strong>)` : '');
 }
 
 let RESEND_KEY = '';
