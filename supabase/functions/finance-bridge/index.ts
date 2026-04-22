@@ -1,25 +1,14 @@
 // Passerelle finance Modulimo — point d'entree HTTP.
 // -----------------------------------------------------------------------
-// Role : recevoir un JWT signe par l'Auth Supabase d'un immeuble CoHabitat,
-// le valider contre la JWKS de cet immeuble, resoudre le cohabitat_user_id
-// en client_id + building_id via la base centrale, puis appeler la RPC
-// financiere centrale correspondante avec un JWT re-mint court.
-//
-// Phase 0 : seul /get-balance est branche, en stub (retourne 0.00).
-// Phase 1+ : on ajoutera /list-transactions, /lunch-purchase, etc.
-//
-// Deploiement :
-//   supabase functions deploy finance-bridge --project-ref bpxscgrbxjscicpnheep
-//   supabase secrets set SUPABASE_JWT_SECRET=...  --project-ref bpxscgrbxjscicpnheep
-//
 // Variables env requises :
 //   SUPABASE_URL               Central project URL (preset par Supabase)
-//   SUPABASE_ANON_KEY          Lecture building_registry (preset par Supabase)
-//   SUPABASE_SERVICE_ROLE_KEY  Utilise comme Bearer pour les RPC finance
-//                              (les RPC sont SECURITY DEFINER + GRANT cible
-//                              uniquement service_role). L'Edge Function
-//                              est la frontiere de confiance ; elle a deja
-//                              valide le JWT entrant avant d'appeler.
+//   FINANCE_SERVICE_ROLE_KEY   apikey avec role service_role pour les
+//                              appels PostgREST centraux. Format :
+//                                - sb_secret_... (nouveau format recomande)
+//                                - OU legacy service_role JWT (eyJ...)
+//                              Fallback auto vers SUPABASE_SERVICE_ROLE_KEY
+//                              si pas configure, mais le fallback peut
+//                              ramener le format court auto-injecte.
 // -----------------------------------------------------------------------
 
 import { resolveClaims } from './lib/resolve.ts';
@@ -49,44 +38,31 @@ function json(body: unknown, status = 200) {
 }
 
 const CENTRAL_URL = Deno.env.get('SUPABASE_URL') ?? '';
-const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-// Priorite au secret explicite : le runtime Supabase auto-injecte
-// SUPABASE_SERVICE_ROLE_KEY au nouveau format court (sb_secret_...),
-// qui n'est PAS un JWT et que PostgREST refuse comme Bearer. Le secret
-// FINANCE_SERVICE_ROLE_KEY doit contenir la legacy service_role au
-// format JWT (eyJ...), signee avec la cle JWT precedente encore acceptee.
 const SERVICE_ROLE = Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
   || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   || '';
 
-// Log de diagnostic au boot : on affiche la LONGUEUR des variables (pas
-// leur valeur) pour detecter un SERVICE_ROLE vide sans jamais logger la
-// cle elle-meme. jwt_format distingue un JWT valide (3 parts) d'une cle
-// au format court (sb_secret_...) qui ne marchera pas en Bearer.
 log('info', 'finance_bridge_boot', {
   has_url: CENTRAL_URL.length > 0,
   url_host: CENTRAL_URL ? new URL(CENTRAL_URL).host : null,
-  anon_len: ANON_KEY.length,
   service_role_len: SERVICE_ROLE.length,
   service_role_source: Deno.env.get('FINANCE_SERVICE_ROLE_KEY')
     ? 'secret'
     : Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
       ? 'auto'
       : 'missing',
-  service_role_jwt_format: SERVICE_ROLE.split('.').length === 3,
+  service_role_format: SERVICE_ROLE.startsWith('sb_secret_')
+    ? 'new'
+    : SERVICE_ROLE.split('.').length === 3 ? 'legacy_jwt' : 'other',
 });
 
 const deps = {
-  findBuildingByIssuer: makeFindBuildingByIssuer(CENTRAL_URL, ANON_KEY),
+  findBuildingByIssuer: makeFindBuildingByIssuer(CENTRAL_URL, SERVICE_ROLE),
   findClient: makeFindClient(CENTRAL_URL, SERVICE_ROLE),
   getKeyResolver: jwksResolverFor,
 };
 
-// Pour les appels RPC finance on utilise le service_role : il bypasse la
-// RLS et permet a PostgREST d'executer la RPC sans re-verifier un JWT.
-// La securite tient parce que les RPC sont GRANTed uniquement a
-// service_role et que seule cette Edge Function detient la cle.
-const caller = makePostgrestCaller(CENTRAL_URL, ANON_KEY);
+const caller = makePostgrestCaller(CENTRAL_URL);
 
 // Liste blanche des endpoints exposes. Toute route inconnue retourne 404.
 type EndpointName = 'get-balance' | 'lunch-purchase' | 'debit';
