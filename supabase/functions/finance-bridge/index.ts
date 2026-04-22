@@ -31,6 +31,7 @@ import {
 import { makePostgrestCaller } from './lib/central.ts';
 import { handleGetBalance } from './handlers/get_balance.ts';
 import { handleLunchPurchase } from './handlers/lunch_purchase.ts';
+import { handleDebit } from './handlers/debit.ts';
 import { log, requestId } from './lib/logger.ts';
 
 const CORS_HEADERS: Record<string, string> = {
@@ -88,10 +89,11 @@ const deps = {
 const caller = makePostgrestCaller(CENTRAL_URL, ANON_KEY);
 
 // Liste blanche des endpoints exposes. Toute route inconnue retourne 404.
-type EndpointName = 'get-balance' | 'lunch-purchase';
+type EndpointName = 'get-balance' | 'lunch-purchase' | 'debit';
 const ENDPOINTS: Record<EndpointName, true> = {
   'get-balance': true,
   'lunch-purchase': true,
+  'debit': true,
 };
 
 function extractEndpoint(pathname: string): EndpointName | null {
@@ -172,6 +174,24 @@ Deno.serve(async (req) => {
         status: result.status,
         building_id: resolved.claims.building_id,
         client_id: resolved.claims.client_id,
+        replay: (result.body as { idempotent_replay?: boolean }).idempotent_replay,
+      });
+      return json(result.body, result.status);
+    }
+    case 'debit': {
+      const result = await handleDebit(
+        resolved.claims,
+        body as never,
+        caller,
+        SERVICE_ROLE,
+      );
+      log(result.status >= 500 ? 'error' : 'info', 'debit_done', {
+        rid,
+        endpoint,
+        status: result.status,
+        building_id: resolved.claims.building_id,
+        client_id: resolved.claims.client_id,
+        type: (body as { type?: string } | null)?.type,
         replay: (result.body as { idempotent_replay?: boolean }).idempotent_replay,
       });
       return json(result.body, result.status);
