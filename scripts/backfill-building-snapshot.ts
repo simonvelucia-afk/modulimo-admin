@@ -56,6 +56,8 @@ interface SnapshotReport {
   skipped_zero_balance: number;
   skipped_already_credited: Array<{ client_id: string; central: number; cohabitat: number }>;
   errors: number;
+  cursor_initialized_at: string | null;
+  cursor_initialized_tx_id: string | null;
 }
 
 function env(name: string, required = true): string {
@@ -113,6 +115,8 @@ async function main() {
     skipped_zero_balance: 0,
     skipped_already_credited: [],
     errors: 0,
+    cursor_initialized_at: null,
+    cursor_initialized_tx_id: null,
   };
 
   console.error(`=== Snapshot building=${BUILDING_ID} dry_run=${DRY_RUN} ===`);
@@ -202,7 +206,43 @@ async function main() {
     );
     Deno.exit(3);
   }
-  console.error('\nSnapshot OK.');
+
+  // 4. Initialise le sync_cursor a la derniere tx CoHabitat => le worker
+  //    finance-sync n'empilera PAS l'historique sur le snapshot, il ne
+  //    reprendra qu'a partir des nouveaux mouvements post-snapshot.
+  //    Sans cette etape, le premier run de sync rejoue les 26 anciennes
+  //    tx par-dessus le credit initial et corrompt le solde.
+  if (!DRY_RUN) {
+    try {
+      const lastTx = await pgGet<Array<{ id: string; created_at: string }>>(
+        COHAB_URL, COHAB_SR,
+        `/rest/v1/transactions?select=id,created_at&order=created_at.desc,id.desc&limit=1`,
+      );
+      if (lastTx[0]) {
+        await pgRpc(
+          CENTRAL_URL, CENTRAL_SR, 'record_sync_progress',
+          {
+            p_building_id: BUILDING_ID,
+            p_last_synced_at: lastTx[0].created_at,
+            p_last_synced_tx_id: lastTx[0].id,
+            p_applied: 0,
+            p_replayed: 0,
+            p_errors: 0,
+            p_error_message: 'cursor_init_by_snapshot',
+          },
+        );
+        report.cursor_initialized_at = lastTx[0].created_at;
+        report.cursor_initialized_tx_id = lastTx[0].id;
+      } else {
+        report.cursor_initialized_tx_id = null;
+      }
+    } catch (e) {
+      console.error(`cursor init failed: ${(e as Error).message}`);
+      report.errors++;
+    }
+  }
+
+  console.error('\nSnapshot OK. cursor_init=' + (report.cursor_initialized_tx_id ?? 'none'));
 }
 
 if (import.meta.main) {
