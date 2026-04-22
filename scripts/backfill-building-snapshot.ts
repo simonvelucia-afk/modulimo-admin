@@ -71,7 +71,7 @@ function env(name: string, required = true): string {
 
 async function pgGet<T>(base: string, key: string, path: string): Promise<T> {
   const res = await fetch(`${base}${path}`, {
-    headers: { apikey: key, Authorization: `Bearer ${key}` },
+    headers: { apikey: key },
   });
   if (!res.ok) throw new Error(`GET ${path} => ${res.status}: ${await res.text()}`);
   return await res.json() as T;
@@ -87,7 +87,6 @@ async function pgRpc<T>(
     method: 'POST',
     headers: {
       apikey: key,
-      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
       Prefer: 'return=representation',
     },

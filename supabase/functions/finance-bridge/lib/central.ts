@@ -1,11 +1,17 @@
 // Appels vers les RPC PostgREST centrales. Separe du handler pour que les
 // tests puissent injecter un caller fake sans avoir a mocker fetch global.
+//
+// Modele d'auth apres migration vers les nouvelles Supabase API keys :
+// on envoie UNIQUEMENT un header `apikey` avec une valeur de type
+// sb_secret_... (ou legacy JWT tant qu'il reste valide). Pas de header
+// Authorization Bearer — PostgREST mappe automatiquement l'apikey au bon
+// role (service_role pour un secret, anon pour un publishable).
 
 export interface CentralCaller {
   callRpc<T = unknown>(
     rpcName: string,
     params: Record<string, unknown>,
-    centralJwt: string,
+    apiKey: string,
   ): Promise<CentralRpcResult<T>>;
 }
 
@@ -13,24 +19,19 @@ export type CentralRpcResult<T> =
   | { ok: true; data: T }
   | { ok: false; status: number; error: string; body?: unknown };
 
-// Implementation production : POST /rest/v1/rpc/<name> avec le JWT central
-// mine par mintCentralJwt. PostgREST valide la signature HS256 grace au
-// SUPABASE_JWT_SECRET partage, puis applique RLS selon les claims.
-export function makePostgrestCaller(centralUrl: string, anonKey: string): CentralCaller {
+export function makePostgrestCaller(centralUrl: string): CentralCaller {
   return {
     async callRpc<T>(
       rpcName: string,
       params: Record<string, unknown>,
-      centralJwt: string,
+      apiKey: string,
     ): Promise<CentralRpcResult<T>> {
       const url = new URL(`/rest/v1/rpc/${rpcName}`, centralUrl);
       const res = await fetch(url, {
         method: 'POST',
         headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${centralJwt}`,
+          apikey: apiKey,
           'Content-Type': 'application/json',
-          // Retourne le body JSON meme en cas d'erreur Postgres.
           Prefer: 'return=representation',
         },
         body: JSON.stringify(params),
@@ -49,3 +50,4 @@ export function makePostgrestCaller(centralUrl: string, anonKey: string): Centra
     },
   };
 }
+

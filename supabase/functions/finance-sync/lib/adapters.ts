@@ -42,9 +42,6 @@ export function makeCohabitatFetcher(cohabitatKeys: Map<string, string>) {
       'select',
       'id,user_id,amount,type,reference_id,reference_type,description,created_at,created_by',
     );
-    // Filtre : strictement apres le dernier curseur (both created_at et id).
-    // En cas d'egalite parfaite, un ORDER BY secondaire sur id.asc garantit
-    // la determinisme, et le filtre `gt` exclut le dernier deja sync.
     if (building.last_synced_at) {
       url.searchParams.set('created_at', `gte.${building.last_synced_at}`);
     }
@@ -52,13 +49,12 @@ export function makeCohabitatFetcher(cohabitatKeys: Map<string, string>) {
     url.searchParams.set('limit', String(limit));
 
     const res = await fetch(url, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      headers: { apikey: key },
     });
     if (!res.ok) {
       throw new Error(`cohabitat fetch ${res.status}: ${await res.text()}`);
     }
     const rows = await res.json() as CohabitatTransaction[];
-    // Post-filtre : si created_at == last_synced_at, on skip les id <= last_synced_tx_id
     if (building.last_synced_tx_id && building.last_synced_at) {
       return rows.filter((r) => {
         if (r.created_at > building.last_synced_at!) return true;
@@ -75,7 +71,6 @@ export function makeCentralAdapters(central: CentralEnv): Pick<
 > {
   const headers = {
     apikey: central.serviceRole,
-    Authorization: `Bearer ${central.serviceRole}`,
     'Content-Type': 'application/json',
   };
 
@@ -139,7 +134,6 @@ export async function listBuildingsToSync(central: CentralEnv): Promise<Building
     method: 'POST',
     headers: {
       apikey: central.serviceRole,
-      Authorization: `Bearer ${central.serviceRole}`,
       'Content-Type': 'application/json',
     },
     body: '{}',

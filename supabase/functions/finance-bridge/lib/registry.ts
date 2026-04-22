@@ -34,13 +34,12 @@ export function clearJwksCache() {
   JWKS_CACHE.clear();
 }
 
-// Lookup building_registry par issuer. Utilise la cle anon du projet central
-// avec une policy SELECT pour `authenticated` (cf. migration). On n'utilise
-// PAS la service_role ici car on lit uniquement des metadonnees publiques
-// entre immeubles.
+// Lookup building_registry par issuer. Reception par apikey (sb_secret_ ou
+// legacy service_role JWT). Pas de Bearer — PostgREST mappe l'apikey au
+// role et gere la RLS en consequence.
 export function makeFindBuildingByIssuer(
   centralUrl: string,
-  anonKey: string,
+  apiKey: string,
 ): (iss: string) => Promise<BuildingRegistryEntry | null> {
   return async (iss: string) => {
     const url = new URL('/rest/v1/building_registry', centralUrl);
@@ -48,7 +47,7 @@ export function makeFindBuildingByIssuer(
     url.searchParams.set('jwt_issuer', `eq.${iss}`);
     url.searchParams.set('limit', '1');
     const res = await fetch(url, {
-      headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+      headers: { apikey: apiKey },
     });
     if (!res.ok) return null;
     const rows = (await res.json()) as BuildingRow[];
@@ -61,12 +60,12 @@ export function makeFindBuildingByIssuer(
   };
 }
 
-// Resolution cohabitat_user_id -> client_id en utilisant la service_role du
-// projet central. On bypasse la RLS ici volontairement : c'est notre role
-// d'approuver la demande, pas celui de l'immeuble.
+// Resolution cohabitat_user_id -> client_id. Utilise sb_secret_ (ou legacy
+// service_role JWT) pour bypasser RLS sur clients — on est le gardien de
+// l'autorisation, pas la DB.
 export function makeFindClient(
   centralUrl: string,
-  serviceRoleKey: string,
+  apiKey: string,
 ): (cohabitatUserId: string, buildingId: string) => Promise<{ client_id: string } | null> {
   return async (cohabitatUserId: string, buildingId: string) => {
     const url = new URL('/rest/v1/clients', centralUrl);
@@ -75,7 +74,7 @@ export function makeFindClient(
     url.searchParams.set('building_id', `eq.${buildingId}`);
     url.searchParams.set('limit', '1');
     const res = await fetch(url, {
-      headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
+      headers: { apikey: apiKey },
     });
     if (!res.ok) return null;
     const rows = (await res.json()) as Array<{ id: string }>;
