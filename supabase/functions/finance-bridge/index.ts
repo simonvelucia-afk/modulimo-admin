@@ -16,6 +16,7 @@ import {
   jwksResolverFor,
   makeFindBuildingByIssuer,
   makeFindClient,
+  makeProvisionClient,
 } from './lib/registry.ts';
 import { makePostgrestCaller } from './lib/central.ts';
 import { handleGetBalance } from './handlers/get_balance.ts';
@@ -61,6 +62,7 @@ log('info', 'finance_bridge_boot', {
 const deps = {
   findBuildingByIssuer: makeFindBuildingByIssuer(CENTRAL_URL, SERVICE_ROLE),
   findClient: makeFindClient(CENTRAL_URL, SERVICE_ROLE),
+  provisionClient: makeProvisionClient(CENTRAL_URL, SERVICE_ROLE),
   getKeyResolver: jwksResolverFor,
 };
 

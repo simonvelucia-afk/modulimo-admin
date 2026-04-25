@@ -20,7 +20,19 @@ export type KeyResolver = Parameters<typeof jwtVerify>[1];
 export interface ResolveDeps {
   findBuildingByIssuer: (iss: string) => Promise<BuildingRegistryEntry | null>;
   getKeyResolver: (entry: BuildingRegistryEntry) => KeyResolver;
+  // Lookup strict : retourne null si la row clients n'existe pas. Garde sa
+  // semantique pour les appels qui veulent verifier l'existence sans creer
+  // (record-real-payment cible un user qui DOIT deja exister).
   findClient: (
+    cohabitatUserId: string,
+    buildingId: string,
+  ) => Promise<{ client_id: string } | null>;
+  // Find-or-create : appelee dans resolveClaims quand le JWT est valide
+  // pour un building actif mais que le caller n'a pas encore de row
+  // clients (resident ajoute apres la migration initiale). Doit etre
+  // idempotente cote DB. Retourne null seulement sur echec DB hard
+  // (que finance-bridge surface en CLIENT_NOT_FOUND).
+  provisionClient: (
     cohabitatUserId: string,
     buildingId: string,
   ) => Promise<{ client_id: string } | null>;
@@ -71,8 +83,15 @@ export async function resolveClaims(
   const sub = typeof verified.sub === 'string' ? verified.sub : null;
   if (!sub) return { ok: false, status: 401, error: 'MISSING_SUBJECT' };
 
-  const client = await deps.findClient(sub, building.id);
-  if (!client) return { ok: false, status: 403, error: 'CLIENT_NOT_FOUND' };
+  let client = await deps.findClient(sub, building.id);
+  if (!client) {
+    // Auto-provision : JWT valide + building actif = resident legitime,
+    // pas besoin d'attendre un bouton Sync manuel. La RPC centrale
+    // ensure_client est idempotente, donc une race entre deux requetes
+    // concurrentes pour le meme resident converge sur la meme client_id.
+    client = await deps.provisionClient(sub, building.id);
+    if (!client) return { ok: false, status: 403, error: 'CLIENT_NOT_FOUND' };
+  }
 
   return {
     ok: true,

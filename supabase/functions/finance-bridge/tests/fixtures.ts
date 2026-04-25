@@ -79,15 +79,26 @@ export async function signAsBuilding(
 // d'une table cohabitat_user_id -> client_id.
 export interface ResolveFixtures {
   buildings: BuildingFixture[];
+  // Pre-existing clients rows. Le tableau est mute par provisionClient
+  // (auto-provision) — par defaut, makeResolveDeps installe un
+  // provisionClient qui ajoute la nouvelle row dans ce tableau pour que
+  // les findClient ulterieurs la trouvent (mime le comportement DB
+  // post-INSERT).
   clients: Array<{
     cohabitat_user_id: string;
     building_id: string;
     client_id: string;
   }>;
+  // Si fourni, override le provisionClient default. Permet aux tests de
+  // simuler un echec DB (retourne null) sans avoir a forger une fonction
+  // entiere.
+  provisionClient?: ResolveDeps['provisionClient'];
 }
 
 export function makeResolveDeps(fx: ResolveFixtures): ResolveDeps {
   const byIssuer = new Map(fx.buildings.map((b) => [b.entry.jwt_issuer, b]));
+  const buildingActive = (buildingId: string) =>
+    fx.buildings.some((b) => b.entry.id === buildingId && b.entry.status === 'active');
   return {
     findBuildingByIssuer: async (iss) => {
       const b = byIssuer.get(iss);
@@ -104,6 +115,22 @@ export function makeResolveDeps(fx: ResolveFixtures): ResolveDeps {
       );
       return row ? { client_id: row.client_id } : null;
     },
+    provisionClient: fx.provisionClient ?? (async (cohabitatUserId, buildingId) => {
+      // Mime ensure_client cote DB : refus si building inactif, sinon
+      // INSERT...ON CONFLICT DO NOTHING + retour de la row gagnante.
+      if (!buildingActive(buildingId)) return null;
+      const existing = fx.clients.find(
+        (c) => c.cohabitat_user_id === cohabitatUserId && c.building_id === buildingId,
+      );
+      if (existing) return { client_id: existing.client_id };
+      const row = {
+        cohabitat_user_id: cohabitatUserId,
+        building_id: buildingId,
+        client_id: crypto.randomUUID(),
+      };
+      fx.clients.push(row);
+      return { client_id: row.client_id };
+    }),
   };
 }
 

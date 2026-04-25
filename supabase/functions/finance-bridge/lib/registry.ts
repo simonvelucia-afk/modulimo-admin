@@ -81,3 +81,49 @@ export function makeFindClient(
     return rows[0] ? { client_id: rows[0].id } : null;
   };
 }
+
+// Auto-provisionnement de la row clients via la RPC centrale ensure_client
+// (sql/016). Idempotente cote DB : un 2eme appel concurrent pour le meme
+// resident retourne la meme client_id. Retourne null si la RPC echoue
+// (building inactif, parametres invalides, panne reseau) — l'appelant
+// surface CLIENT_NOT_FOUND.
+export function makeProvisionClient(
+  centralUrl: string,
+  apiKey: string,
+): (cohabitatUserId: string, buildingId: string) => Promise<{ client_id: string } | null> {
+  return async (cohabitatUserId: string, buildingId: string) => {
+    const url = new URL('/rest/v1/rpc/ensure_client', centralUrl);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        apikey: apiKey,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        p_cohabitat_user_id: cohabitatUserId,
+        p_building_id: buildingId,
+      }),
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    // PostgREST renvoie la valeur scalaire d'une RPC comme string brut
+    // (le uuid) ou parfois un objet { ensure_client: <uuid> } selon les
+    // versions. On gere les deux pour resilience.
+    let id: string | null = null;
+    if (typeof parsed === 'string') id = parsed;
+    else if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      const v = obj.ensure_client;
+      if (typeof v === 'string') id = v;
+    }
+    return id ? { client_id: id } : null;
+  };
+}
