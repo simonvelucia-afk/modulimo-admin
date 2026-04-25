@@ -57,8 +57,17 @@ BEGIN
   -- En cas de race (deux appels concurrents pour le meme resident),
   -- le 2e tombe sur DO NOTHING + RETURNING vide -> on relit la row
   -- gagnante.
-  INSERT INTO clients (cohabitat_user_id, building_id)
-  VALUES (p_cohabitat_user_id, p_building_id)
+  --
+  -- pending_approval=false + is_active=true : un JWT valide d'un building
+  -- actif est deja une preuve d'autorisation suffisante. L'ancien flag
+  -- "Non-sync" cote CoHabitat (qui forcait un clic admin) disparait
+  -- avec ce default, le residant peut transiger immediatement.
+  INSERT INTO clients (
+    cohabitat_user_id, building_id, pending_approval, is_active
+  )
+  VALUES (
+    p_cohabitat_user_id, p_building_id, false, true
+  )
   ON CONFLICT (building_id, cohabitat_user_id)
     WHERE cohabitat_user_id IS NOT NULL AND building_id IS NOT NULL
     DO NOTHING
