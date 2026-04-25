@@ -1,0 +1,22 @@
+# Supabase project config — modulimo-admin (centrale Modulimo)
+# Lu par la CLI au moment de `supabase functions deploy`. Limite a la
+# config strictement necessaire ; le reste reste sur les defauts.
+
+project_id = "bpxscgrbxjscicpnheep"
+
+# ── Edge Functions ────────────────────────────────────────────────────
+# verify_jwt = false desactive la verification JWT au niveau du gateway
+# Supabase pour cette fonction. Necessaire car :
+#   1. /health doit etre joignable sans auth (probe client). Avec
+#      verify_jwt=true, le gateway repond 401 avant que le code
+#      n'execute le short-circuit public.
+#   2. Les endpoints proteges (/get-balance, /lunch-purchase, /debit,
+#      /transfer-to-dep, /record-real-payment) signent les JWT avec la
+#      cle de l'immeuble appelant (Auth Supabase de cohabitat), pas
+#      avec la cle JWT du projet central. Donc le gateway central ne
+#      peut PAS valider ces JWT — la verification est faite par le
+#      code de la fonction (resolve.ts) via JWKS distantes.
+# La fonction enforce l'auth elle-meme : seul /health est public, tous
+# les autres endpoints rejettent les requetes sans Bearer valide.
+[functions.finance-bridge]
+verify_jwt = false
