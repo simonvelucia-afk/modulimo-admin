@@ -21,6 +21,8 @@ import { makePostgrestCaller } from './lib/central.ts';
 import { handleGetBalance } from './handlers/get_balance.ts';
 import { handleLunchPurchase } from './handlers/lunch_purchase.ts';
 import { handleDebit } from './handlers/debit.ts';
+import { handleTransferToDep } from './handlers/transfer.ts';
+import { handleRecordRealPayment } from './handlers/record_real_payment.ts';
 import { log, requestId } from './lib/logger.ts';
 
 const CORS_HEADERS: Record<string, string> = {
@@ -65,11 +67,13 @@ const deps = {
 const caller = makePostgrestCaller(CENTRAL_URL);
 
 // Liste blanche des endpoints exposes. Toute route inconnue retourne 404.
-type EndpointName = 'get-balance' | 'lunch-purchase' | 'debit';
+type EndpointName = 'get-balance' | 'lunch-purchase' | 'debit' | 'transfer-to-dep' | 'record-real-payment';
 const ENDPOINTS: Record<EndpointName, true> = {
   'get-balance': true,
   'lunch-purchase': true,
   'debit': true,
+  'transfer-to-dep': true,
+  'record-real-payment': true,
 };
 
 function extractEndpoint(pathname: string): EndpointName | null {
@@ -168,6 +172,44 @@ Deno.serve(async (req) => {
         building_id: resolved.claims.building_id,
         client_id: resolved.claims.client_id,
         type: (body as { type?: string } | null)?.type,
+        replay: (result.body as { idempotent_replay?: boolean }).idempotent_replay,
+      });
+      return json(result.body, result.status);
+    }
+    case 'transfer-to-dep': {
+      const result = await handleTransferToDep(
+        resolved.claims,
+        body as never,
+        caller,
+        SERVICE_ROLE,
+      );
+      log(result.status >= 500 ? 'error' : 'info', 'transfer_to_dep_done', {
+        rid,
+        endpoint,
+        status: result.status,
+        building_id: resolved.claims.building_id,
+        client_id: resolved.claims.client_id,
+        replay: (result.body as { idempotent_replay?: boolean }).idempotent_replay,
+      });
+      return json(result.body, result.status);
+    }
+    case 'record-real-payment': {
+      const result = await handleRecordRealPayment(
+        resolved.claims,
+        body as never,
+        resolved.building,
+        token,
+        deps.findClient,
+        caller,
+        SERVICE_ROLE,
+      );
+      log(result.status >= 500 ? 'error' : 'info', 'record_real_payment_done', {
+        rid,
+        endpoint,
+        status: result.status,
+        building_id: resolved.claims.building_id,
+        admin_user_id: resolved.claims.cohabitat_user_id,
+        target_user_id: (body as { target_user_id?: string } | null)?.target_user_id,
         replay: (result.body as { idempotent_replay?: boolean }).idempotent_replay,
       });
       return json(result.body, result.status);
