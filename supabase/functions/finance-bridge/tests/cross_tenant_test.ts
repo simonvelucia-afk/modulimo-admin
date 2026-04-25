@@ -110,12 +110,47 @@ Deno.test('fuite #5 : immeuble suspendu => BUILDING_INACTIVE', async () => {
   if (!res.ok) assertEquals(res.error, 'BUILDING_INACTIVE');
 });
 
-Deno.test('fuite #6 : cohabitat_user_id sans row clients => CLIENT_NOT_FOUND', async () => {
-  const { buildingA, deps } = await setup();
-  const token = await signAsBuilding(buildingA, '99999999-9999-9999-9999-999999999999');
+Deno.test('fuite #6 : cohabitat_user_id sans row clients => auto-provisionne (sql/016)', async () => {
+  // Avant sql/016, ce scenario retournait CLIENT_NOT_FOUND et l'admin
+  // devait cliquer un bouton Sync manuel. Maintenant resolveClaims
+  // appelle ensure_client() qui INSERT la row si elle manque, et le
+  // resident peut transiger immediatement. La securite tient toujours :
+  // le JWT a deja ete verifie + le building est actif a ce stade.
+  const { buildingA, clients, deps } = await setup();
+  const newUser = '99999999-9999-9999-9999-999999999999';
+  const before = clients.length;
+  const token = await signAsBuilding(buildingA, newUser);
   const res = await resolveClaims(token, deps);
+  assertEquals(res.ok, true);
+  if (res.ok) {
+    assertEquals(res.claims.building_id, buildingA.entry.id);
+    assertEquals(res.claims.cohabitat_user_id, newUser);
+    // La row a bien ete pushee dans la table in-memory via le mock
+    // provisionClient — equivalent au INSERT cote DB en prod.
+    assertEquals(clients.length, before + 1);
+    const created = clients[clients.length - 1];
+    assertEquals(created.cohabitat_user_id, newUser);
+    assertEquals(created.building_id, buildingA.entry.id);
+    assertEquals(res.claims.client_id, created.client_id);
+  }
+});
+
+Deno.test('fuite #6b : provisionClient echoue (DB hard error) => CLIENT_NOT_FOUND', async () => {
+  // Cas degenere : la RPC ensure_client centrale renvoie null/erreur. On
+  // surface CLIENT_NOT_FOUND pour signaler clairement a l'appelant que
+  // l'auto-provision n'a pas marche, plutot que de masquer en 500.
+  const { buildingA, clients, deps } = await setup();
+  const failingDeps = {
+    ...deps,
+    provisionClient: async () => null,
+  };
+  const newUser = '88888888-8888-8888-8888-888888888888';
+  const before = clients.length;
+  const token = await signAsBuilding(buildingA, newUser);
+  const res = await resolveClaims(token, failingDeps);
   assertEquals(res.ok, false);
   if (!res.ok) assertEquals(res.error, 'CLIENT_NOT_FOUND');
+  assertEquals(clients.length, before);
 });
 
 Deno.test('fuite #7 : JWT expire => INVALID_SIGNATURE (jose rejette sur exp)', async () => {
