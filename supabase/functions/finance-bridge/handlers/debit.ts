@@ -18,10 +18,19 @@ const ALLOWED_DEBIT_TYPES = [
 // Un user ne peut refund qu'une transaction existante qu'il a lui-meme
 // faite ; cela est garanti par le RLS + le reference_id fourni, pas
 // par cette fonction. On whitelist juste les types.
+//
+// lunch_cancel_refund : utilise par le kiosque LunchMachine (P3) quand
+// l'usager appuie "Annuler" en zone de cueillette apres une livraison
+// pre-debitee a confirmReservation. Le robot remet le plateau et
+// central recoit un refund idempotent qui annule le debit. La cle
+// d'idempotence cote client est 'lunch:refund:' + idempotency_key
+// d'origine, garantissant qu'un seul refund est applique meme si
+// cancelPickup est rejoue par l'outbox.
 const ALLOWED_REFUND_TYPES = [
   'space_cancel_refund',
   'trip_cancel_refund',
   'trip_driver_earning',
+  'lunch_cancel_refund',
 ] as const;
 
 type AllowedType =

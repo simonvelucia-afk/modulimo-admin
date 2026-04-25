@@ -24,11 +24,12 @@ import { handleLunchPurchase } from './handlers/lunch_purchase.ts';
 import { handleDebit } from './handlers/debit.ts';
 import { handleTransferToDep } from './handlers/transfer.ts';
 import { handleRecordRealPayment } from './handlers/record_real_payment.ts';
+import { handleHealth } from './handlers/health.ts';
 import { log, requestId } from './lib/logger.ts';
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-client-info, idempotency-key',
   'Access-Control-Max-Age': '86400',
 };
@@ -69,14 +70,19 @@ const deps = {
 const caller = makePostgrestCaller(CENTRAL_URL);
 
 // Liste blanche des endpoints exposes. Toute route inconnue retourne 404.
-type EndpointName = 'get-balance' | 'lunch-purchase' | 'debit' | 'transfer-to-dep' | 'record-real-payment';
+// `health` est public (pas de Bearer requis) car il sert au probing cote
+// client pour decider si l'UI doit verrouiller les actions transactionnelles.
+type EndpointName = 'get-balance' | 'lunch-purchase' | 'debit' | 'transfer-to-dep' | 'record-real-payment' | 'health';
 const ENDPOINTS: Record<EndpointName, true> = {
   'get-balance': true,
   'lunch-purchase': true,
   'debit': true,
   'transfer-to-dep': true,
   'record-real-payment': true,
+  'health': true,
 };
+const PUBLIC_ENDPOINTS: ReadonlySet<EndpointName> = new Set(['health']);
+const GET_ENDPOINTS:    ReadonlySet<EndpointName> = new Set(['health']);
 
 function extractEndpoint(pathname: string): EndpointName | null {
   const parts = pathname.split('/').filter(Boolean);
@@ -88,11 +94,34 @@ function extractEndpoint(pathname: string): EndpointName | null {
 Deno.serve(async (req) => {
   const rid = requestId();
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS_HEADERS });
-  if (req.method !== 'POST') return json({ error: 'METHOD_NOT_ALLOWED', rid }, 405);
 
   const url = new URL(req.url);
   const endpoint = extractEndpoint(url.pathname);
   if (!endpoint) return json({ error: 'UNKNOWN_ENDPOINT', rid }, 404);
+
+  const isPublic = PUBLIC_ENDPOINTS.has(endpoint);
+  const allowGet = GET_ENDPOINTS.has(endpoint);
+  if (req.method === 'GET' && !allowGet) {
+    return json({ error: 'METHOD_NOT_ALLOWED', rid }, 405);
+  }
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return json({ error: 'METHOD_NOT_ALLOWED', rid }, 405);
+  }
+
+  // Endpoint public : pas de resolution JWT, pas de body parsing.
+  // Court-circuit pour le health-check.
+  if (isPublic && endpoint === 'health') {
+    if (!SERVICE_ROLE) {
+      log('error', 'service_role_missing', { rid, endpoint });
+      return json({ ok: false, error: 'SERVICE_ROLE_MISSING', rid }, 503);
+    }
+    const result = await handleHealth(caller, SERVICE_ROLE);
+    log(result.status >= 500 ? 'warn' : 'info', 'health_done', {
+      rid, endpoint, status: result.status,
+      latency_ms: (result.body as { latency_ms?: number }).latency_ms,
+    });
+    return json(result.body, result.status);
+  }
 
   const auth = req.headers.get('authorization') ?? '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
@@ -215,6 +244,11 @@ Deno.serve(async (req) => {
         replay: (result.body as { idempotent_replay?: boolean }).idempotent_replay,
       });
       return json(result.body, result.status);
+    }
+    default: {
+      // health est court-circuite plus haut ; tout autre endpoint manquant
+      // serait un bug de routage.
+      return json({ error: 'ENDPOINT_NOT_HANDLED', rid, endpoint }, 500);
     }
   }
 });
