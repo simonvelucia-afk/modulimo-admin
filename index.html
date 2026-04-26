@@ -590,12 +590,14 @@
         <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:10px;">🔒 Conformite Loi 25 (Quebec)</div>
         <div id="loi25-status" style="font-size:12px;color:var(--text2);margin-bottom:10px;">—</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-secondary btn-sm" type="button" onclick="loi25Export()">📥 Exporter rapport JSON</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="loi25ExportHTML()">📄 Rapport imprimable (HTML)</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="loi25Export()">📥 Export JSON (audit)</button>
           <button class="btn btn-danger btn-sm" type="button" onclick="loi25Anonymize()">🔒 Anonymiser ce client</button>
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5;">
-          <strong>Export</strong> : telecharge en JSON toutes les donnees centrales du client (PII + analytics) pour respecter le droit d'acces.<br>
-          <strong>Anonymiser</strong> : efface les PII centrales (nom, courriel, adresse) en gardant les donnees analytiques (montants, dates) pour audit comptable. Action irreversible mais idempotente.<br>
+          <strong>📄 Rapport HTML</strong> : ouvre un rapport lisible dans un nouvel onglet, a remettre au resident. Imprimable / sauvegardable en PDF via Ctrl+P.<br>
+          <strong>📥 JSON</strong> : copie technique exhaustive pour l'audit interne ou integration externe.<br>
+          <strong>🔒 Anonymiser</strong> : efface les PII centrales (nom, courriel, adresse) en gardant les donnees analytiques (montants, dates). Idempotent.<br>
           <strong>Note</strong> : l'anonymisation cote CoHabitat (resident) doit etre faite separement depuis l'UI CoHabitat de l'immeuble.
         </div>
       </div>
@@ -2752,6 +2754,232 @@ async function loi25Export() {
     toast('Export telecharge : ' + filename, 'success');
   } catch (e) {
     toast('Echec export : ' + (e.message || e), 'error');
+  }
+}
+
+// Genere un rapport HTML imprimable a partir du JSON exporte par
+// l'Edge Function. Format pensé pour etre remis au resident sous
+// Loi 25 : sections lisibles, totaux, tableaux. Ctrl+P pour PDF.
+function _loi25BuildHtml(data) {
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+  function fmt(v) {
+    if (v == null || v === '') return '—';
+    if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
+    if (typeof v === 'object') return '<code>' + esc(JSON.stringify(v)) + '</code>';
+    return esc(v);
+  }
+  function fmtMoney(n) {
+    if (n == null) return '—';
+    return Number(n).toFixed(2) + ' $';
+  }
+  function fmtDate(s) {
+    if (!s) return '—';
+    try { return new Date(s).toLocaleString('fr-CA'); } catch(_) { return esc(s); }
+  }
+
+  const c = data.client || {};
+  const contracts = data.contracts || [];
+  const invoices = data.invoices || [];
+  const transactions = data.transactions || [];
+  const realPayments = data.real_payments || [];
+  const lunchTx = data.lunch_transactions || [];
+  const balance = data.balance;
+  const depBalances = data.dependent_balances || [];
+
+  function profileRow(label, val) {
+    return '<tr><th>' + esc(label) + '</th><td>' + fmt(val) + '</td></tr>';
+  }
+
+  let html = '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">';
+  html += '<title>Rapport Loi 25 — ' + esc(c.name || c.id) + '</title>';
+  html += '<style>';
+  html += 'body{font-family:system-ui,-apple-system,sans-serif;max-width:850px;margin:30px auto;padding:0 20px;color:#222;line-height:1.5;}';
+  html += 'h1{font-size:24px;margin:0 0 4px;color:#1a1a1a;border-bottom:2px solid #c8a96e;padding-bottom:8px;}';
+  html += 'h2{font-size:16px;margin:32px 0 12px;color:#444;border-bottom:1px solid #ddd;padding-bottom:4px;}';
+  html += '.meta{font-size:12px;color:#777;margin-bottom:24px;}';
+  html += 'table{width:100%;border-collapse:collapse;margin:8px 0;font-size:13px;}';
+  html += 'th,td{padding:6px 10px;text-align:left;border-bottom:1px solid #eee;vertical-align:top;}';
+  html += 'th{background:#f7f5ef;font-weight:600;width:35%;}';
+  html += '.list-tbl th{background:#222;color:#fff;width:auto;}';
+  html += '.empty{font-style:italic;color:#999;font-size:12px;padding:8px 0;}';
+  html += '.amount{text-align:right;font-variant-numeric:tabular-nums;}';
+  html += '.note{font-size:11px;color:#888;margin-top:24px;border-top:1px solid #ddd;padding-top:12px;}';
+  html += '@media print{body{margin:0;}h1{page-break-after:avoid;}h2{page-break-after:avoid;}table{page-break-inside:avoid;}}';
+  html += '@media print{.no-print{display:none;}}';
+  html += '</style></head><body>';
+
+  html += '<button class="no-print" onclick="window.print()" style="float:right;padding:6px 12px;cursor:pointer;">🖨 Imprimer / PDF</button>';
+
+  html += '<h1>📄 Rapport Loi 25 — Modulimo</h1>';
+  html += '<div class="meta">';
+  html += 'Genere le ' + fmtDate(data.exported_at) + '<br>';
+  html += 'Client : <strong>' + esc(c.name || data.subject_client_id) + '</strong> ('  + esc(data.subject_client_id) + ')';
+  html += '</div>';
+
+  // Profil
+  html += '<h2>1. Profil</h2><table>';
+  html += profileRow('Nom', c.name);
+  html += profileRow('Type', c.client_type);
+  html += profileRow('Courriel contact', c.contact_email);
+  html += profileRow('Nom contact', c.contact_name);
+  html += profileRow('Courriel CoHabitat', c.cohabitat_email);
+  html += profileRow('Adresse', c.address);
+  html += profileRow('Ville', c.city);
+  html += profileRow('Province', c.province);
+  html += profileRow('Statut', c.is_active ? 'Actif' : 'Inactif');
+  html += profileRow('Cree le', fmtDate(c.created_at));
+  if (c.anonymized_at) html += profileRow('Anonymise le', fmtDate(c.anonymized_at));
+  html += '</table>';
+
+  // Solde
+  html += '<h2>2. Solde virtuel</h2>';
+  if (balance) {
+    html += '<table>';
+    html += profileRow('Solde courant', fmtMoney(balance.virtual_balance));
+    html += profileRow('Derniere mise a jour', fmtDate(balance.updated_at));
+    html += '</table>';
+  } else {
+    html += '<p class="empty">Aucun solde central enregistre.</p>';
+  }
+  if (depBalances.length) {
+    html += '<h3 style="font-size:14px;margin-top:12px;">Soldes des dependants</h3>';
+    html += '<table class="list-tbl"><thead><tr><th>Dependant (id externe)</th><th class="amount">Solde</th><th>Maj</th></tr></thead><tbody>';
+    depBalances.forEach(d => {
+      html += '<tr><td>' + esc(d.external_dep_id) + '</td><td class="amount">' + fmtMoney(d.virtual_balance) + '</td><td>' + fmtDate(d.updated_at) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  // Contrats
+  html += '<h2>3. Contrats (' + contracts.length + ')</h2>';
+  if (contracts.length === 0) {
+    html += '<p class="empty">Aucun contrat.</p>';
+  } else {
+    html += '<table class="list-tbl"><thead><tr><th>Plan</th><th>Type</th><th>Statut</th><th>Debut</th><th>Fin</th><th>Paye jusqu\'au</th><th class="amount">Mensuel</th><th>Signe</th></tr></thead><tbody>';
+    contracts.forEach(ct => {
+      html += '<tr>';
+      html += '<td>' + esc(ct.plan) + '</td>';
+      html += '<td>' + esc(ct.type) + '</td>';
+      html += '<td>' + esc(ct.status) + '</td>';
+      html += '<td>' + esc(ct.starts_at) + '</td>';
+      html += '<td>' + esc(ct.ends_at || '∞') + '</td>';
+      html += '<td>' + esc(ct.paid_until || '—') + '</td>';
+      html += '<td class="amount">' + (ct.monthly_amount != null ? fmtMoney(ct.monthly_amount) : '—') + '</td>';
+      html += '<td>' + (ct.signed_at ? '✓ ' + new Date(ct.signed_at).toLocaleDateString('fr-CA') : '—') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  // Factures
+  let totalIssued = 0, totalPaid = 0;
+  invoices.forEach(i => {
+    totalIssued += Number(i.total_amount || 0);
+    if (i.status === 'paid') totalPaid += Number(i.total_amount || 0);
+  });
+  html += '<h2>4. Factures (' + invoices.length + ')</h2>';
+  if (invoices.length === 0) {
+    html += '<p class="empty">Aucune facture.</p>';
+  } else {
+    html += '<table class="list-tbl"><thead><tr><th>Periode</th><th>Emise le</th><th>Statut</th><th class="amount">Total</th><th>Mode</th></tr></thead><tbody>';
+    invoices.forEach(i => {
+      html += '<tr>';
+      html += '<td>' + esc(i.period_start) + ' → ' + esc(i.period_end) + '</td>';
+      html += '<td>' + fmtDate(i.issued_at) + '</td>';
+      html += '<td>' + esc(i.status) + '</td>';
+      html += '<td class="amount">' + fmtMoney(i.total_amount) + '</td>';
+      html += '<td>' + esc(i.billing_mode) + '</td>';
+      html += '</tr>';
+    });
+    html += '<tr style="font-weight:700;background:#f7f5ef;"><td colspan="3">TOTAL emis</td><td class="amount">' + fmtMoney(totalIssued) + '</td><td>(payes : ' + fmtMoney(totalPaid) + ')</td></tr>';
+    html += '</tbody></table>';
+  }
+
+  // Transactions
+  html += '<h2>5. Mouvements de solde (' + transactions.length + ')</h2>';
+  if (transactions.length === 0) {
+    html += '<p class="empty">Aucun mouvement.</p>';
+  } else {
+    html += '<table class="list-tbl"><thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="amount">Montant</th><th class="amount">Solde apres</th></tr></thead><tbody>';
+    transactions.forEach(t => {
+      const amt = Number(t.amount || 0);
+      const color = amt < 0 ? 'color:#a44;' : 'color:#2a7;';
+      html += '<tr>';
+      html += '<td>' + fmtDate(t.created_at) + '</td>';
+      html += '<td>' + esc(t.type) + '</td>';
+      html += '<td>' + esc(t.description || '—') + '</td>';
+      html += '<td class="amount" style="' + color + '">' + (amt >= 0 ? '+' : '') + fmtMoney(amt) + '</td>';
+      html += '<td class="amount">' + fmtMoney(t.balance_after) + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  // Paiements reels
+  html += '<h2>6. Paiements recus (' + realPayments.length + ')</h2>';
+  if (realPayments.length === 0) {
+    html += '<p class="empty">Aucun paiement reel enregistre.</p>';
+  } else {
+    html += '<table class="list-tbl"><thead><tr><th>Date</th><th>Methode</th><th class="amount">Montant</th><th>Reference</th></tr></thead><tbody>';
+    realPayments.forEach(rp => {
+      html += '<tr>';
+      html += '<td>' + fmtDate(rp.received_at || rp.created_at) + '</td>';
+      html += '<td>' + esc(rp.method || '—') + '</td>';
+      html += '<td class="amount">' + fmtMoney(rp.amount) + '</td>';
+      html += '<td>' + esc(rp.reference || rp.notes || '—') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  // Lunch
+  html += '<h2>7. Achats Machine Lunch (' + lunchTx.length + ')</h2>';
+  if (lunchTx.length === 0) {
+    html += '<p class="empty">Aucun achat lunch.</p>';
+  } else {
+    html += '<table class="list-tbl"><thead><tr><th>Date</th><th>Machine</th><th>Acheteur</th><th class="amount">Montant</th></tr></thead><tbody>';
+    lunchTx.forEach(lt => {
+      html += '<tr>';
+      html += '<td>' + fmtDate(lt.created_at) + '</td>';
+      html += '<td>' + esc(lt.machine_id || '—') + '</td>';
+      html += '<td>' + esc(lt.buyer_name || '—') + '</td>';
+      html += '<td class="amount">' + fmtMoney(lt.amount) + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  // Footer
+  html += '<div class="note">';
+  html += 'Ce rapport est genere conformement a la <strong>Loi 25 du Quebec</strong> (droit d\'acces aux renseignements personnels). ';
+  html += 'Il contient toutes les donnees centrales lieees au client identifie ci-dessus. ';
+  html += 'Pour toute question, contactez l\'administrateur de votre immeuble ou Modulimo. ';
+  html += 'Une copie technique en JSON est disponible sur demande pour audit ou integration tierce.';
+  html += '</div>';
+
+  html += '</body></html>';
+  return html;
+}
+
+async function loi25ExportHTML() {
+  const clientId = document.getElementById('client-id').value;
+  if (!clientId) { toast('Aucun client charge', 'error'); return; }
+  try {
+    toast('Generation du rapport...', 'info');
+    const r = await _loi25Call('export', clientId);
+    const html = _loi25BuildHtml(r.data);
+    const w = window.open('', '_blank');
+    if (!w) { toast('Popup bloque par le navigateur', 'error'); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    toast('Rapport ouvert dans un nouvel onglet', 'success');
+  } catch (e) {
+    toast('Echec generation rapport : ' + (e.message || e), 'error');
   }
 }
 
