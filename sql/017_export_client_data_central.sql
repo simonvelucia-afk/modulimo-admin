@@ -98,13 +98,10 @@ BEGIN
       WHERE lt.client_id = p_client_id
     ), '[]'::jsonb),
 
-    -- Tokens de signature emis pour ce client (contrats signes ou en
-    -- attente). Skip silencieusement si la table n'existe pas.
-    'signature_tokens',      COALESCE((
-      SELECT jsonb_agg(to_jsonb(st))
-      FROM signature_tokens st
-      WHERE st.client_id = p_client_id
-    ), '[]'::jsonb),
+    -- Note : pas de table signature_tokens — les colonnes
+    -- signature_token / signature_token_expires_at vivent directement
+    -- sur la table contracts (cf sql/001_signature_tokens.sql), donc
+    -- deja couvertes par 'contracts' ci-dessus.
 
     -- Log des divergences soldes (si l'immeuble a synchronise des
     -- valeurs locales differentes des valeurs centrales pour ce client)
