@@ -86,13 +86,20 @@ CREATE OR REPLACE FUNCTION compute_anon_certificate_hash(
   p_admin_email   text
 ) RETURNS text
 LANGUAGE sql IMMUTABLE AS $fn$
-  SELECT encode(digest(
-    coalesce(p_subject_name, '') || '|' ||
-    coalesce(p_subject_unit, '') || '|' ||
-    coalesce(p_building_name, '') || '|' ||
-    to_char(p_anonymized_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '|' ||
-    coalesce(p_admin_email, ''),
-    'sha256'), 'hex')
+  -- extensions.digest() est requis cote Supabase : pgcrypto vit dans
+  -- le schema 'extensions', pas 'public'. Casts explicites a text car
+  -- digest() refuse les literaux 'unknown' avec 42883.
+  SELECT encode(
+    extensions.digest(
+      (coalesce(p_subject_name, '') || '|' ||
+       coalesce(p_subject_unit, '') || '|' ||
+       coalesce(p_building_name, '') || '|' ||
+       to_char(p_anonymized_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '|' ||
+       coalesce(p_admin_email, ''))::text,
+      'sha256'::text
+    ),
+    'hex'
+  )
 $fn$;
 
 COMMENT ON TABLE anonymization_certificates IS
