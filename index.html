@@ -593,12 +593,14 @@
           <button class="btn btn-secondary btn-sm" type="button" onclick="loi25ExportHTML()">📄 Rapport imprimable (HTML)</button>
           <button class="btn btn-secondary btn-sm" type="button" onclick="loi25Export()">📥 Export JSON (audit)</button>
           <button class="btn btn-danger btn-sm" type="button" onclick="loi25Anonymize()">🔒 Anonymiser ce client</button>
+          <button class="btn btn-secondary btn-sm" id="loi25-cert-btn" type="button" onclick="loi25ShowCertificate()" style="display:none;">📋 Re-telecharger certificat</button>
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5;">
-          <strong>📄 Rapport HTML</strong> : ouvre un rapport lisible dans un nouvel onglet, a remettre au resident. Imprimable / sauvegardable en PDF via Ctrl+P.<br>
-          <strong>📥 JSON</strong> : copie technique exhaustive pour l'audit interne ou integration externe.<br>
-          <strong>🔒 Anonymiser</strong> : efface les PII centrales (nom, courriel, adresse) en gardant les donnees analytiques (montants, dates). Idempotent.<br>
-          <strong>Note</strong> : l'anonymisation cote CoHabitat (resident) doit etre faite separement depuis l'UI CoHabitat de l'immeuble.
+          <strong>📄 Rapport HTML</strong> : ouvre un rapport lisible a remettre au resident. Imprimable PDF (Ctrl+P).<br>
+          <strong>📥 JSON</strong> : copie technique pour l'audit interne.<br>
+          <strong>🔒 Anonymiser</strong> : efface les PII centrales en gardant les donnees analytiques. <em>Refuse si bail actif.</em> Genere un certificat probant conserve 6 ans (Loi 25).<br>
+          <strong>📋 Certificat</strong> : preuve probante d'anonymisation (re-imprimable a tout moment).<br>
+          <strong>Note</strong> : l'anonymisation cote CoHabitat doit etre declenchee separement depuis l'UI immeuble.
         </div>
       </div>
     </div>
@@ -2706,13 +2708,16 @@ async function editClient(c) {
   // Loi 25 : visible en edition. Affiche le statut d'anonymisation.
   const sec = document.getElementById('loi25-section');
   const status = document.getElementById('loi25-status');
+  const certBtn = document.getElementById('loi25-cert-btn');
   if (sec) sec.style.display = '';
   if (status) {
     if (c.anonymized_at) {
       const d = new Date(c.anonymized_at).toLocaleString('fr-CA');
       status.innerHTML = '<span style="color:var(--accent3);font-weight:600;">🔒 Client anonymise le ' + d + '</span>';
+      if (certBtn) certBtn.style.display = '';
     } else {
       status.innerHTML = '<span style="color:var(--text3);">Client non anonymise — donnees personnelles intactes.</span>';
+      if (certBtn) certBtn.style.display = 'none';
     }
   }
   openModal('modal-client');
@@ -2983,21 +2988,127 @@ async function loi25ExportHTML() {
   }
 }
 
+// Construit le certificat HTML probant (preuve Loi 25). Minimisation
+// stricte : nom, logement, date, admin, hash. Imprimable PDF.
+function _loi25BuildCertificateHtml(cert) {
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+  function fmtDate(s) {
+    if (!s) return '—';
+    try { return new Date(s).toLocaleString('fr-CA', { dateStyle: 'long', timeStyle: 'medium' }); } catch(_) { return esc(s); }
+  }
+
+  let h = '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">';
+  h += '<title>Certificat d\'anonymisation — ' + esc(cert.subject_name || cert.id) + '</title>';
+  h += '<style>';
+  h += 'body{font-family:Georgia,"Times New Roman",serif;max-width:680px;margin:40px auto;padding:0 30px;color:#222;line-height:1.7;}';
+  h += '.head{text-align:center;border-bottom:3px double #c8a96e;padding-bottom:20px;margin-bottom:30px;}';
+  h += '.head h1{font-size:22px;margin:0 0 6px;color:#1a1a1a;}';
+  h += '.head .sub{font-size:14px;color:#666;font-style:italic;}';
+  h += '.section{margin:20px 0;}';
+  h += '.section h2{font-size:14px;text-transform:uppercase;letter-spacing:.1em;color:#888;margin:0 0 10px;border-bottom:1px solid #ddd;padding-bottom:4px;}';
+  h += 'table{width:100%;border-collapse:collapse;font-size:14px;}';
+  h += 'th,td{padding:6px 0;text-align:left;vertical-align:top;}';
+  h += 'th{font-weight:600;color:#444;width:40%;padding-right:16px;}';
+  h += '.hash{font-family:monospace;font-size:11px;color:#666;word-break:break-all;background:#f7f5ef;padding:8px;border-radius:4px;}';
+  h += '.footer{margin-top:40px;border-top:1px solid #ddd;padding-top:20px;font-size:11px;color:#888;line-height:1.6;}';
+  h += '.no-print{margin-bottom:20px;}';
+  h += '@media print{body{margin:0;}.no-print{display:none;}}';
+  h += '</style></head><body>';
+
+  h += '<div class="no-print"><button onclick="window.print()" style="padding:8px 16px;cursor:pointer;font-size:14px;">🖨 Imprimer / PDF</button></div>';
+
+  h += '<div class="head">';
+  h += '<h1>Certificat d\'anonymisation</h1>';
+  h += '<div class="sub">Loi 25 (Quebec) — Droit a l\'effacement</div>';
+  h += '</div>';
+
+  h += '<p>Modulimo certifie par la presente que les donnees personnelles du resident identifie ci-apres ont ete anonymisees conformement a la <strong>Loi sur la protection des renseignements personnels dans le secteur prive (LRQ, c. P-39.1, "Loi 25")</strong>.</p>';
+
+  h += '<div class="section"><h2>1. Sujet</h2><table>';
+  h += '<tr><th>Nom du resident</th><td>' + esc(cert.subject_name) + '</td></tr>';
+  if (cert.subject_unit) h += '<tr><th>Unite / logement</th><td>' + esc(cert.subject_unit) + '</td></tr>';
+  if (cert.building_name) h += '<tr><th>Immeuble</th><td>' + esc(cert.building_name) + '</td></tr>';
+  h += '<tr><th>Identifiant client</th><td><code style="font-size:12px;">' + esc(cert.client_id || '—') + '</code></td></tr>';
+  h += '</table></div>';
+
+  h += '<div class="section"><h2>2. Anonymisation</h2><table>';
+  h += '<tr><th>Date et heure</th><td>' + fmtDate(cert.anonymized_at) + '</td></tr>';
+  h += '<tr><th>Effectuee par</th><td>' + esc(cert.admin_email || '—') + '</td></tr>';
+  h += '<tr><th>Champs effaces</th><td>nom, courriel(s), adresse, ville, notes, lien d\'acces CoHabitat</td></tr>';
+  h += '<tr><th>Donnees conservees</th><td>identifiants opaques, montants, dates, statuts, types de transaction (analytics anonymes)</td></tr>';
+  h += '<tr><th>Conservation du certificat</th><td>Jusqu\'au ' + fmtDate(cert.retention_until) + ' (6 ans, prescription fiscale)</td></tr>';
+  h += '</table></div>';
+
+  h += '<div class="section"><h2>3. Integrite</h2>';
+  h += '<p style="font-size:12px;color:#666;margin-bottom:6px;">Empreinte cryptographique SHA-256 du contenu du certificat :</p>';
+  h += '<div class="hash">' + esc(cert.content_sha256 || '—') + '</div>';
+  h += '<p style="font-size:11px;color:#888;margin-top:8px;">Cette empreinte permet de verifier que le certificat n\'a pas ete altere depuis son emission. Toute modification d\'un champ ci-dessus produirait une empreinte differente.</p>';
+  h += '<p style="font-size:11px;color:#888;">Identifiant unique du certificat : <code>' + esc(cert.id || '—') + '</code></p>';
+  h += '</div>';
+
+  h += '<div class="footer">';
+  h += '<p><strong>Recours</strong> : si vous estimez que vos droits n\'ont pas ete respectes, vous pouvez deposer une plainte aupres de la <strong>Commission d\'acces a l\'information du Quebec</strong> (CAI), 525, boul. Rene-Levesque Est, Bureau 2.36, Quebec (QC) G1R 5S9 — <a href="https://www.cai.gouv.qc.ca">cai.gouv.qc.ca</a>.</p>';
+  h += '<p>Pour toute question concernant ce certificat, contactez l\'administrateur de votre immeuble ou Modulimo.</p>';
+  h += '</div>';
+
+  h += '</body></html>';
+  return h;
+}
+
+function _loi25OpenCertificate(cert) {
+  const html = _loi25BuildCertificateHtml(cert);
+  const w = window.open('', '_blank');
+  if (!w) { toast('Popup bloque par le navigateur — autorisez les popups', 'error'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
 async function loi25Anonymize() {
   const clientId = document.getElementById('client-id').value;
   if (!clientId) { toast('Aucun client charge', 'error'); return; }
-  if (!confirm('ANONYMISER ce client ?\n\nLes donnees personnelles centrales (nom, courriel, adresse) seront effacees. Les donnees analytiques (montants, dates) seront preservees.\n\nN\'oubliez pas d\'anonymiser aussi cote CoHabitat (UI immeuble) pour le profile resident.')) return;
+  if (!confirm('ANONYMISER ce client ?\n\nLes donnees personnelles centrales seront effacees. Les donnees analytiques (montants, dates) seront preservees.\n\nUn certificat probant sera genere et conserve 6 ans (Loi 25).\n\nLe systeme refusera si un bail est encore actif.')) return;
   try {
     const r = await _loi25Call('anonymize', clientId);
     if (r.result && r.result.already_anonymized) {
-      toast('Client deja anonymise (idempotent)', 'info');
+      toast('Client deja anonymise — affichage du certificat existant', 'info');
+      // Charge le certificat existant et l'affiche
+      const cr = await _loi25Call('certificate', clientId);
+      if (cr.ok && cr.certificate) _loi25OpenCertificate(cr.certificate);
+    } else if (r.result && r.result.certificate) {
+      toast('Anonymisation OK — certificat genere', 'success');
+      _loi25OpenCertificate({ ...r.result.certificate, client_id: clientId });
     } else {
       toast('Anonymisation OK : ' + (r.result?.anon_label || 'client masque'), 'success');
     }
     closeModal('modal-client');
     await loadClients();
   } catch (e) {
-    toast('Echec anonymisation : ' + (e.message || e), 'error');
+    const msg = (e.message || '') + '';
+    if (msg.includes('ACTIVE_CONTRACT') || msg.includes('contrat')) {
+      toast('Anonymisation refusee : bail actif. Resilier le contrat avant.', 'error');
+    } else {
+      toast('Echec anonymisation : ' + msg, 'error');
+    }
+  }
+}
+
+async function loi25ShowCertificate() {
+  const clientId = document.getElementById('client-id').value;
+  if (!clientId) return;
+  try {
+    const r = await _loi25Call('certificate', clientId);
+    if (!r.ok || !r.certificate || !r.certificate.ok) {
+      toast('Certificat introuvable (client peut-etre anonymise avant la phase G)', 'error');
+      return;
+    }
+    _loi25OpenCertificate({ ...r.certificate, client_id: clientId });
+  } catch (e) {
+    toast('Echec : ' + (e.message || e), 'error');
   }
 }
 

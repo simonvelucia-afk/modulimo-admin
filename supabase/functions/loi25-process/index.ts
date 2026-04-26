@@ -150,6 +150,12 @@ Deno.serve(async (req) => {
     });
     if (!r.ok) {
       console.error('[loi25-process] anonymize_client_central failed', r);
+      // Si la RPC a refuse pour cause de bail actif, on remonte un 409
+      // (Conflict) pour que l'UI distingue ce cas du 502 generique.
+      const detail = r.body as { code?: string; message?: string } | undefined;
+      if (detail?.code === '23514' || detail?.message?.includes('contrat')) {
+        return json({ ok: false, error: 'ACTIVE_CONTRACT', detail: detail.message }, 409);
+      }
       return json({ ok: false, error: 'CENTRAL_RPC_FAILED', detail: r.body }, 502);
     }
     console.warn('[loi25-process] ANONYMIZE', { admin: admin.email, client_id: clientId });
@@ -160,6 +166,19 @@ Deno.serve(async (req) => {
       result: r.data,
       note: 'Cote central uniquement. La RPC CoHabitat anonymize_profile doit etre declenchee separement par l\'admin local (UI CoHabitat) pour anonymiser aussi le profile resident.',
     });
+  }
+
+  // Re-telecharger un certificat existant (cas : admin a perdu l'onglet
+  // original ou doit re-imprimer pour le resident).
+  if (endpoint === 'certificate') {
+    const r = await callRpc('get_anonymization_certificate', {
+      p_client_id: clientId,
+    });
+    if (!r.ok) {
+      console.error('[loi25-process] get_anonymization_certificate failed', r);
+      return json({ ok: false, error: 'CENTRAL_RPC_FAILED', detail: r.body }, 502);
+    }
+    return json({ ok: true, action: 'certificate', certificate: r.data });
   }
 
   return json({ ok: false, error: 'UNKNOWN_ENDPOINT' }, 404);
