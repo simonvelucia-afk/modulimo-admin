@@ -2781,9 +2781,14 @@ async function editClient(c) {
 }
 
 // Loi 25 — Edge Function loi25-process pour export et anonymisation.
-async function _loi25Call(action, clientId) {
+// Helper d'appel a l'Edge Function loi25-process. Le 2eme argument est :
+//   - une string UUID pour les endpoints client_id (export, anonymize, certificate)
+//   - un objet { name } pour /lookup
+//   - n'importe quel objet pour des extensions futures
+async function _loi25Call(action, arg) {
   const { data: { session } } = await sb.auth.getSession();
   if (!session?.access_token) throw new Error('Session admin requise');
+  const body = (typeof arg === 'string') ? { client_id: arg } : (arg || {});
   const res = await fetch(CENTRAL_URL + '/functions/v1/loi25-process/' + action, {
     method: 'POST',
     headers: {
@@ -2791,7 +2796,7 @@ async function _loi25Call(action, clientId) {
       'apikey': CENTRAL_KEY,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ client_id: clientId })
+    body: JSON.stringify(body)
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error((json && json.error) || ('HTTP ' + res.status));
@@ -3192,6 +3197,31 @@ async function saveClient() {
     updated_at: new Date().toISOString()
   };
   if (!payload.name) { toast('Nom requis', 'error'); return; }
+
+  // Garde-fou Loi 25 : si on cree un nouveau client, verifier qu'il n'existe
+  // pas deja un certificat d'anonymisation pour ce nom. Eviter de re-creer un
+  // compte pour quelqu'un qui a demande l'effacement (prevention de fraude /
+  // ambiguite admin).
+  if (!id) {
+    try {
+      const r = await _loi25Call('lookup', { name: payload.name });
+      const matches = (r && r.result && r.result.matches) || [];
+      if (matches.length > 0) {
+        const m = matches[0];
+        const d = m.anonymized_at ? new Date(m.anonymized_at).toLocaleDateString('fr-CA') : '?';
+        const loc = [m.building_name, m.subject_unit].filter(Boolean).join(' · ');
+        const msg = '⚠ Une personne portant ce nom a deja ete anonymisee :\n\n'
+          + '   ' + m.subject_name + (loc ? ' — ' + loc : '') + '\n'
+          + '   Anonymisee le ' + d + ' par ' + (m.admin_email || 'admin')
+          + (matches.length > 1 ? '\n   (+' + (matches.length - 1) + ' autre' + (matches.length > 2 ? 's' : '') + ' match' + (matches.length > 2 ? 'es' : '') + ')' : '')
+          + '\n\nCreer quand meme un nouveau compte ?';
+        if (!confirm(msg)) return;
+      }
+    } catch (e) {
+      // Si le lookup plante (pas critique), on continue mais on log.
+      console.warn('[saveClient] lookup loi25 failed:', e && e.message);
+    }
+  }
 
   if (id) {
     // Modification
