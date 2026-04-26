@@ -20,3 +20,9 @@ project_id = "bpxscgrbxjscicpnheep"
 # les autres endpoints rejettent les requetes sans Bearer valide.
 [functions.finance-bridge]
 verify_jwt = false
+
+# loi25-process : meme raisonnement que finance-bridge — on fait notre
+# propre validation JWT (resolve via /auth/v1/user). /health doit aussi
+# etre public (no auth requise pour le ping).
+[functions.loi25-process]
+verify_jwt = false
