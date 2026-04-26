@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
   const admin = await resolveAdmin(adminToken);
   if (!admin.ok) return json({ ok: false, error: admin.error }, 401);
 
-  let body: { client_id?: string } = {};
+  let body: { client_id?: string; name?: string } = {};
   try {
     if ((req.headers.get('content-type') ?? '').includes('application/json')) {
       body = await req.json();
@@ -122,6 +122,23 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'INVALID_JSON' }, 400);
   }
 
+  // /lookup prend un name au lieu d'un client_id (cas : verifier si un
+  // nom donne correspond a un certificat d'anonymisation existant).
+  if (endpoint === 'lookup') {
+    const name = (body.name || '').trim();
+    if (!name || name.length < 3) {
+      return json({ ok: false, error: 'NAME_TOO_SHORT', detail: 'Au moins 3 caracteres requis' }, 400);
+    }
+    const r = await callRpc('lookup_anonymization_by_name', { p_name: name });
+    if (!r.ok) {
+      console.error('[loi25-process] lookup failed', r);
+      return json({ ok: false, error: 'CENTRAL_RPC_FAILED', detail: r.body }, 502);
+    }
+    console.info('[loi25-process] lookup', { admin: admin.email, name });
+    return json({ ok: true, action: 'lookup', result: r.data });
+  }
+
+  // Tous les autres endpoints exigent un client_id valide.
   const clientId = body.client_id?.trim();
   if (!clientId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId)) {
     return json({ ok: false, error: 'INVALID_CLIENT_ID' }, 400);
