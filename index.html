@@ -3134,8 +3134,12 @@ async function loi25Anonymize() {
   const clientId = document.getElementById('client-id').value;
   if (!clientId) { toast('Aucun client charge', 'error'); return; }
   if (!confirm('ANONYMISER ce client ?\n\nLes donnees personnelles centrales seront effacees. Les donnees analytiques (montants, dates) seront preservees.\n\nUn certificat probant sera genere et conserve 6 ans (Loi 25).\n\nLe systeme refusera si un bail est encore actif.')) return;
+  // Optionnel : demander le numero d'unite/logement pour le certificat.
+  // Cote central, l'unite des locataires n'est pas stockee (vit dans
+  // CoHabitat profiles.unit). L'admin saisit ce qu'il sait — vide = OK.
+  const subjectUnit = (prompt('Numero d\'unite ou logement loue (optionnel, pour le certificat) :', '') || '').trim();
   try {
-    const r = await _loi25Call('anonymize', clientId);
+    const r = await _loi25Call('anonymize', { client_id: clientId, subject_unit: subjectUnit || null });
     if (r.result && r.result.already_anonymized) {
       toast('Client deja anonymise — affichage du certificat existant', 'info');
       // Charge le certificat existant et l'affiche

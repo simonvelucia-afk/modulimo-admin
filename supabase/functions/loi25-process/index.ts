@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
   const admin = await resolveAdmin(adminToken);
   if (!admin.ok) return json({ ok: false, error: admin.error }, 401);
 
-  let body: { client_id?: string; name?: string } = {};
+  let body: { client_id?: string; name?: string; subject_unit?: string } = {};
   try {
     if ((req.headers.get('content-type') ?? '').includes('application/json')) {
       body = await req.json();
@@ -164,6 +164,7 @@ Deno.serve(async (req) => {
     const r = await callRpc('anonymize_client_central', {
       p_client_id: clientId,
       p_admin_id: admin.user_id,
+      p_subject_unit: body.subject_unit ?? null,
     });
     if (!r.ok) {
       console.error('[loi25-process] anonymize_client_central failed', r);
