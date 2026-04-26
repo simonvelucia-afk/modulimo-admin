@@ -93,14 +93,12 @@ BEGIN
 
   -- 4. Anonymise les noms de signataires sur les contrats. Les autres
   --    colonnes (plan, dates, montants, status) sont analytiques et
-  --    restent intactes.
+  --    restent intactes. Pas de updated_at sur contracts (la table
+  --    a juste created_at).
   UPDATE contracts SET
-    signed_by_name = CASE
-      WHEN signed_by_name IS NOT NULL THEN v_anon_label
-      ELSE NULL
-    END,
-    updated_at = COALESCE(updated_at, now())
-  WHERE client_id = p_client_id OR owner_client_id = p_client_id;
+    signed_by_name = v_anon_label
+  WHERE (client_id = p_client_id OR owner_client_id = p_client_id)
+    AND signed_by_name IS NOT NULL;
   GET DIAGNOSTICS v_contracts_count = ROW_COUNT;
 
   RETURN jsonb_build_object(
