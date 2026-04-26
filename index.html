@@ -934,38 +934,53 @@ async function loadClients() {
   const owners = clientsCache.filter(c => c.client_type === 'owner');
   const tenants = clientsCache.filter(c => c.client_type !== 'owner');
 
+  // Boutons d'actions par row : "Voir" si anonymise (lecture seule),
+  // sinon Modifier + Activer/Desactiver. On ne propose plus de re-activer
+  // un client anonymise — ce serait incoherent (impossible de savoir
+  // qui c'est, et le verrou DB refuserait toute modification).
+  function _actionsForClient(c, opts) {
+    if (c.anonymized_at) {
+      return '<button class="btn btn-secondary btn-sm" onclick="editClientById(\'' + c.id + '\')">👁 Voir</button>';
+    }
+    let html = '<button class="btn btn-secondary btn-sm" onclick="editClientById(\'' + c.id + '\')">Modifier</button>';
+    if (opts && opts.contract) {
+      html += '<button class="btn btn-info btn-sm" onclick="openContractForClient(\'' + c.id + '\', \'owner\')">📄 Contrat</button>';
+    }
+    html += '<button class="btn ' + (c.is_active ? 'btn-danger' : 'btn-secondary') + ' btn-sm" onclick="toggleClientActive(\'' + c.id + '\', ' + (!c.is_active) + ')">' + (c.is_active ? 'Désactiver' : 'Activer') + '</button>';
+    return html;
+  }
+
+  function _statusBadge(c) {
+    if (c.anonymized_at) return '<span class="badge badge-gray" title="Anonymise — lecture seule">🔒 Archivé</span>';
+    return '<span class="badge ' + (c.is_active ? 'badge-green' : 'badge-red') + '">' + (c.is_active ? 'Actif' : 'Inactif') + '</span>';
+  }
+
   const rows = [];
   owners.forEach(o => {
     const mods = o.cohabitat_modules || {};
     const modStr = [mods.spaces?'🏠':'', mods.trips?'🚗':'', mods.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
-    rows.push(`<tr style="background:rgba(200,169,110,.04)">
+    const rowStyle = o.anonymized_at ? 'opacity:.55;background:rgba(120,120,120,.04)' : 'background:rgba(200,169,110,.04)';
+    rows.push(`<tr style="${rowStyle}">
       <td><strong>🏢 ${o.name}</strong>${o.is_admin ? ' <span class="badge badge-yellow" style="font-size:10px;">Admin</span>' : ''}</td>
       <td><span class="badge badge-gray">Propriétaire</span></td>
-      <td><span class="badge ${o.is_active ? 'badge-green' : 'badge-red'}">${o.is_active ? 'Actif' : 'Inactif'}</span></td>
+      <td>${_statusBadge(o)}</td>
       <td style="font-size:12px">${o.contact_name ? '<strong>' + o.contact_name + '</strong><br>' : ''}${o.contact_email || '—'}</td>
       <td>${modStr}</td>
-      <td><div class="td-actions">
-        <button class="btn btn-secondary btn-sm" onclick="editClientById('${o.id}')">Modifier</button>
-        <button class="btn btn-info btn-sm" onclick="openContractForClient('${o.id}', 'owner')">📄 Contrat</button>
-        <button class="btn ${o.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${o.id}', ${!o.is_active})">${o.is_active ? 'Désactiver' : 'Activer'}</button>
-      </div></td>
+      <td><div class="td-actions">${_actionsForClient(o, { contract: true })}</div></td>
     </tr>`);
-    // Locataires de ce propriétaire
     const children = tenants.filter(t => t.owner_client_id === o.id);
     children.forEach(t => {
       const typeLabel = t.client_type === 'local' ? '🏠 Local' : '🔗 Réseau';
       const mods2 = t.cohabitat_modules || {};
       const modStr2 = [mods2.spaces?'🏠':'', mods2.trips?'🚗':'', mods2.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
-      rows.push(`<tr>
+      const tStyle = t.anonymized_at ? 'opacity:.55' : '';
+      rows.push(`<tr style="${tStyle}">
         <td style="padding-left:32px;color:var(--text2)">↳ ${t.name}</td>
         <td><span class="badge badge-gray">${typeLabel}</span></td>
-        <td><span class="badge ${t.is_active ? 'badge-green' : 'badge-red'}">${t.is_active ? 'Actif' : 'Inactif'}</span></td>
+        <td>${_statusBadge(t)}</td>
         <td style="font-size:12px">${t.contact_name ? '<strong>' + t.contact_name + '</strong><br>' : ''}${t.contact_email || '—'}</td>
         <td>${modStr2}</td>
-        <td><div class="td-actions">
-          <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
-          <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
-        </div></td>
+        <td><div class="td-actions">${_actionsForClient(t)}</div></td>
       </tr>`);
     });
   });
@@ -977,16 +992,14 @@ async function loadClients() {
       const typeLabel = t.client_type === 'local' ? '🏠 Local' : '🔗 Réseau';
       const mods2 = t.cohabitat_modules || {};
       const modStr2 = [mods2.spaces?'🏠':'', mods2.trips?'🚗':'', mods2.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
-      rows.push(`<tr>
+      const orphStyle = t.anonymized_at ? 'opacity:.55' : '';
+      rows.push(`<tr style="${orphStyle}">
         <td style="color:var(--text2)">${t.name}</td>
         <td><span class="badge badge-gray">${typeLabel}</span></td>
-        <td><span class="badge ${t.is_active ? 'badge-green' : 'badge-red'}">${t.is_active ? 'Actif' : 'Inactif'}</span></td>
+        <td>${_statusBadge(t)}</td>
         <td style="font-size:12px">${t.contact_name ? '<strong>' + t.contact_name + '</strong><br>' : ''}${t.contact_email || '—'}</td>
         <td>${modStr2}</td>
-        <td><div class="td-actions">
-          <button class="btn btn-secondary btn-sm" onclick="editClientById('${t.id}')">Modifier</button>
-          <button class="btn ${t.is_active ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="toggleClientActive('${t.id}', ${!t.is_active})">${t.is_active ? 'Désactiver' : 'Activer'}</button>
-        </div></td>
+        <td><div class="td-actions">${_actionsForClient(t)}</div></td>
       </tr>`);
     });
   }
@@ -2710,16 +2723,35 @@ async function editClient(c) {
   const status = document.getElementById('loi25-status');
   const certBtn = document.getElementById('loi25-cert-btn');
   if (sec) sec.style.display = '';
+  // Verrou complet si client anonymise : tous les champs read-only,
+  // boutons "Enregistrer" et "Anonymiser" masques. La row est archivee,
+  // re-activer ou modifier serait incoherent (on ne sait plus qui c'est).
+  const isAnon = !!c.anonymized_at;
+  const formIds = ['c-name','c-type','c-owner-id','c-email','c-contact','c-is-active',
+                   'c-mod-spaces','c-mod-trips','c-mod-lunch','c-admin-building','c-is-admin','c-notes'];
+  formIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = isAnon;
+  });
+  // Cache "Enregistrer" et "Anonymiser" sur les clients anonymises
+  document.querySelectorAll('#modal-client .modal-footer .btn-primary').forEach(b => {
+    b.style.display = isAnon ? 'none' : '';
+  });
+  document.querySelectorAll('#loi25-section .btn-danger').forEach(b => {
+    b.style.display = isAnon ? 'none' : '';
+  });
   if (status) {
-    if (c.anonymized_at) {
+    if (isAnon) {
       const d = new Date(c.anonymized_at).toLocaleString('fr-CA');
-      status.innerHTML = '<span style="color:var(--accent3);font-weight:600;">🔒 Client anonymise le ' + d + '</span>';
+      status.innerHTML = '<span style="color:var(--accent3);font-weight:700;">🔒 ARCHIVE — anonymise le ' + d + '. Lecture seule.</span>';
       if (certBtn) certBtn.style.display = '';
     } else {
       status.innerHTML = '<span style="color:var(--text3);">Client non anonymise — donnees personnelles intactes.</span>';
       if (certBtn) certBtn.style.display = 'none';
     }
   }
+  // Modifie le titre pour signaler le statut
+  document.getElementById('client-modal-title').textContent = isAnon ? '🔒 Client anonymise (lecture seule)' : 'Modifier client';
   openModal('modal-client');
 }
 
