@@ -584,6 +584,21 @@
         </div>
       </div>
       <div class="form-group" style="margin-top:14px;"><label>Notes</label><textarea id="c-notes" rows="2"></textarea></div>
+
+      <!-- Section Loi 25 — visible uniquement en edition (id existant) -->
+      <div id="loi25-section" class="form-group" style="display:none;border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(232,80,71,.04);margin-top:14px;">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:10px;">🔒 Conformite Loi 25 (Quebec)</div>
+        <div id="loi25-status" style="font-size:12px;color:var(--text2);margin-bottom:10px;">—</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="loi25Export()">📥 Exporter rapport JSON</button>
+          <button class="btn btn-danger btn-sm" type="button" onclick="loi25Anonymize()">🔒 Anonymiser ce client</button>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5;">
+          <strong>Export</strong> : telecharge en JSON toutes les donnees centrales du client (PII + analytics) pour respecter le droit d'acces.<br>
+          <strong>Anonymiser</strong> : efface les PII centrales (nom, courriel, adresse) en gardant les donnees analytiques (montants, dates) pour audit comptable. Action irreversible mais idempotente.<br>
+          <strong>Note</strong> : l'anonymisation cote CoHabitat (resident) doit etre faite separement depuis l'UI CoHabitat de l'immeuble.
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-client')">Annuler</button>
@@ -2650,6 +2665,9 @@ async function openClientModal(c) {
   await populateOwnerSelect();
   onClientTypeChange();
   document.getElementById('client-modal-title').textContent = 'Nouveau client';
+  // Loi 25 : cachee en creation (pas de client_id encore)
+  const sec = document.getElementById('loi25-section');
+  if (sec) sec.style.display = 'none';
   openModal('modal-client');
 }
 
@@ -2683,7 +2701,76 @@ async function editClient(c) {
   await populateOwnerSelect(c.owner_client_id);
   onClientTypeChange();
   document.getElementById('client-modal-title').textContent = 'Modifier client';
+  // Loi 25 : visible en edition. Affiche le statut d'anonymisation.
+  const sec = document.getElementById('loi25-section');
+  const status = document.getElementById('loi25-status');
+  if (sec) sec.style.display = '';
+  if (status) {
+    if (c.anonymized_at) {
+      const d = new Date(c.anonymized_at).toLocaleString('fr-CA');
+      status.innerHTML = '<span style="color:var(--accent3);font-weight:600;">🔒 Client anonymise le ' + d + '</span>';
+    } else {
+      status.innerHTML = '<span style="color:var(--text3);">Client non anonymise — donnees personnelles intactes.</span>';
+    }
+  }
   openModal('modal-client');
+}
+
+// Loi 25 — Edge Function loi25-process pour export et anonymisation.
+async function _loi25Call(action, clientId) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session?.access_token) throw new Error('Session admin requise');
+  const res = await fetch(CENTRAL_URL + '/functions/v1/loi25-process/' + action, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + session.access_token,
+      'apikey': CENTRAL_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ client_id: clientId })
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((json && json.error) || ('HTTP ' + res.status));
+  return json;
+}
+
+async function loi25Export() {
+  const clientId = document.getElementById('client-id').value;
+  if (!clientId) { toast('Aucun client charge', 'error'); return; }
+  try {
+    toast('Export en cours...', 'info');
+    const r = await _loi25Call('export', clientId);
+    const filename = 'loi25-export-' + clientId.slice(0, 8) + '-' + Date.now() + '.json';
+    const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    toast('Export telecharge : ' + filename, 'success');
+  } catch (e) {
+    toast('Echec export : ' + (e.message || e), 'error');
+  }
+}
+
+async function loi25Anonymize() {
+  const clientId = document.getElementById('client-id').value;
+  if (!clientId) { toast('Aucun client charge', 'error'); return; }
+  if (!confirm('ANONYMISER ce client ?\n\nLes donnees personnelles centrales (nom, courriel, adresse) seront effacees. Les donnees analytiques (montants, dates) seront preservees.\n\nN\'oubliez pas d\'anonymiser aussi cote CoHabitat (UI immeuble) pour le profile resident.')) return;
+  try {
+    const r = await _loi25Call('anonymize', clientId);
+    if (r.result && r.result.already_anonymized) {
+      toast('Client deja anonymise (idempotent)', 'info');
+    } else {
+      toast('Anonymisation OK : ' + (r.result?.anon_label || 'client masque'), 'success');
+    }
+    closeModal('modal-client');
+    await loadClients();
+  } catch (e) {
+    toast('Echec anonymisation : ' + (e.message || e), 'error');
+  }
 }
 
 async function saveClient() {
