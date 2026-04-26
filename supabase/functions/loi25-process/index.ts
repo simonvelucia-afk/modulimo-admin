@@ -88,15 +88,17 @@ function extractEndpoint(pathname: string): string | null {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS_HEADERS });
-  if (req.method !== 'POST') return json({ error: 'METHOD_NOT_ALLOWED' }, 405);
 
   const url = new URL(req.url);
   const endpoint = extractEndpoint(url.pathname);
 
-  // Health public — pas d'auth.
+  // Health public — pas d'auth, GET ou POST.
   if (endpoint === 'health') {
     return json({ ok: true, ts: new Date().toISOString() });
   }
+
+  // Les autres endpoints exigent POST.
+  if (req.method !== 'POST') return json({ error: 'METHOD_NOT_ALLOWED' }, 405);
 
   if (!SERVICE_ROLE) {
     return json({ ok: false, error: 'SERVICE_ROLE_MISSING' }, 500);
