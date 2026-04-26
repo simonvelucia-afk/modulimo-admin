@@ -944,17 +944,16 @@ async function loadClients() {
     (certs || []).forEach(ct => { certMap[ct.client_id] = ct; });
   }
 
-  // Annote les clients avec leurs certs pour que les helpers puissent
-  // construire la string "ex: Lucy B — Pointe-Est, Unite 1".
-  function _anonOriginLabel(c) {
+  // Pour les clients anonymises, on affiche directement le nom d'origine
+  // (depuis le certificat) au lieu du label generique "Resident anonyme
+  // #X" qui devient redondant. Si pas de certificat (anonymisations
+  // anciennes pre-Phase G), on garde le label generique en fallback.
+  function _displayName(c) {
+    if (!c.anonymized_at) return c.name;
     const ct = certMap[c.id];
-    if (!ct) return '';
-    const parts = [];
-    if (ct.subject_name) parts.push(ct.subject_name);
+    if (!ct || !ct.subject_name) return c.name;
     const loc = [ct.building_name, ct.subject_unit].filter(Boolean).join(' · ');
-    if (loc) parts.push(loc);
-    if (!parts.length) return '';
-    return ' <span style="font-size:11px;color:var(--text3);font-style:italic;font-weight:400;">(ex: ' + parts.join(' — ') + ')</span>';
+    return ct.subject_name + (loc ? ' <span style="font-size:11px;color:var(--text3);font-style:italic;font-weight:400;">— ' + loc + '</span>' : '');
   }
 
   const owners = clientsCache.filter(c => c.client_type === 'owner');
@@ -987,7 +986,7 @@ async function loadClients() {
     const modStr = [mods.spaces?'🏠':'', mods.trips?'🚗':'', mods.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
     const rowStyle = o.anonymized_at ? 'opacity:.55;background:rgba(120,120,120,.04)' : 'background:rgba(200,169,110,.04)';
     rows.push(`<tr style="${rowStyle}">
-      <td><strong>🏢 ${o.name}</strong>${o.is_admin ? ' <span class="badge badge-yellow" style="font-size:10px;">Admin</span>' : ''}${_anonOriginLabel(o)}</td>
+      <td><strong>🏢 ${_displayName(o)}</strong>${o.is_admin ? ' <span class="badge badge-yellow" style="font-size:10px;">Admin</span>' : ''}</td>
       <td><span class="badge badge-gray">Propriétaire</span></td>
       <td>${_statusBadge(o)}</td>
       <td style="font-size:12px">${o.contact_name ? '<strong>' + o.contact_name + '</strong><br>' : ''}${o.contact_email || '—'}</td>
@@ -1001,7 +1000,7 @@ async function loadClients() {
       const modStr2 = [mods2.spaces?'🏠':'', mods2.trips?'🚗':'', mods2.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
       const tStyle = t.anonymized_at ? 'opacity:.55' : '';
       rows.push(`<tr style="${tStyle}">
-        <td style="padding-left:32px;color:var(--text2)">↳ ${t.name}${_anonOriginLabel(t)}</td>
+        <td style="padding-left:32px;color:var(--text2)">↳ ${_displayName(t)}</td>
         <td><span class="badge badge-gray">${typeLabel}</span></td>
         <td>${_statusBadge(t)}</td>
         <td style="font-size:12px">${t.contact_name ? '<strong>' + t.contact_name + '</strong><br>' : ''}${t.contact_email || '—'}</td>
@@ -1020,7 +1019,7 @@ async function loadClients() {
       const modStr2 = [mods2.spaces?'🏠':'', mods2.trips?'🚗':'', mods2.lunch?'🍱':''].filter(Boolean).join(' ') || '—';
       const orphStyle = t.anonymized_at ? 'opacity:.55' : '';
       rows.push(`<tr style="${orphStyle}">
-        <td style="color:var(--text2)">${t.name}${_anonOriginLabel(t)}</td>
+        <td style="color:var(--text2)">${_displayName(t)}</td>
         <td><span class="badge badge-gray">${typeLabel}</span></td>
         <td>${_statusBadge(t)}</td>
         <td style="font-size:12px">${t.contact_name ? '<strong>' + t.contact_name + '</strong><br>' : ''}${t.contact_email || '—'}</td>
