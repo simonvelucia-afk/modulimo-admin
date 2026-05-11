@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Modulimo Admin -- Candidatures</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --primary: #1f4e79; --primary-dark: #163a5a; --primary-soft: #e8f0f8;
+    --accent: #c8a951; --bg: #f5f4ef; --surface: #ffffff; --border: #e3e1da;
+    --text: #1a1a1a; --text-muted: #6b6b6b;
+    --excellent: #2f7a4d; --bon: #1f4e79; --evaluer: #b8860b; --risque: #a94442;
+    --eco: #2f7a4d; --sec: #5a4a8a; --inn: #c2722e; --radius: 4px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; font-size: 14px; }
+  .topbar { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: white; padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar h1 { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 600; }
+  .topbar .brand { font-size: 11px; letter-spacing: 0.3em; opacity: 0.85; text-transform: uppercase; margin-bottom: 2px; }
+  .topbar a.back { color: rgba(255,255,255,0.85); font-size: 12px; text-decoration: none; margin-right: 14px; }
+  .topbar a.back:hover { color: white; text-decoration: underline; }
+  .auth-section { display: flex; gap: 12px; align-items: center; font-size: 13px; }
+  .auth-section input { padding: 8px 12px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.1); color: white; border-radius: var(--radius); font-size: 13px; }
+  .auth-section input::placeholder { color: rgba(255,255,255,0.6); }
+  .auth-section button { padding: 8px 16px; background: white; color: var(--primary); border: none; border-radius: var(--radius); cursor: pointer; font-weight: 500; font-size: 13px; }
+
+  .layout { display: grid; grid-template-columns: 420px 1fr; height: calc(100vh - 64px); }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; }
+  .filters { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap; background: #fafaf7; position: sticky; top: 0; z-index: 10; }
+  .filter-chip { padding: 6px 12px; border: 1px solid var(--border); background: white; border-radius: 20px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+  .filter-chip:hover { border-color: var(--primary); }
+  .filter-chip.active { background: var(--primary); color: white; border-color: var(--primary); }
+  .candidates-list { padding: 0; }
+  .candidate-item { padding: 16px 20px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+  .candidate-item:hover { background: var(--primary-soft); }
+  .candidate-item.selected { background: var(--primary-soft); border-left: 3px solid var(--primary); padding-left: 17px; }
+  .candidate-name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+  .candidate-meta { font-size: 12px; color: var(--text-muted); }
+  .score-badge { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; font-family: 'Fraunces', serif; font-weight: 600; font-size: 18px; border: 2px solid; }
+  .score-badge.excellent { color: var(--excellent); border-color: var(--excellent); background: #e6f4ec; }
+  .score-badge.bon { color: var(--bon); border-color: var(--bon); background: var(--primary-soft); }
+  .score-badge.a_evaluer { color: var(--evaluer); border-color: var(--evaluer); background: #fcf3e0; }
+  .score-badge.a_risque { color: var(--risque); border-color: var(--risque); background: #fbeae9; }
+
+  .detail { padding: 32px 40px; overflow-y: auto; }
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); text-align: center; }
+  .empty-state h3 { font-family: 'Fraunces', serif; font-size: 20px; margin-bottom: 8px; color: var(--text); }
+
+  .detail-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border); gap: 24px; }
+  .detail-header h2 { font-family: 'Fraunces', serif; font-weight: 600; font-size: 28px; margin-bottom: 6px; }
+  .detail-header .meta { font-size: 13px; color: var(--text-muted); }
+  .score-large { text-align: center; padding: 16px 24px; border-radius: var(--radius); border: 2px solid; }
+  .score-large.excellent { color: var(--excellent); border-color: var(--excellent); background: #e6f4ec; }
+  .score-large.bon { color: var(--bon); border-color: var(--bon); background: var(--primary-soft); }
+  .score-large.a_evaluer { color: var(--evaluer); border-color: var(--evaluer); background: #fcf3e0; }
+  .score-large.a_risque { color: var(--risque); border-color: var(--risque); background: #fbeae9; }
+  .score-large .num { font-family: 'Fraunces', serif; font-weight: 600; font-size: 42px; line-height: 1; }
+  .score-large .num small { font-size: 18px; opacity: 0.7; }
+  .score-large .cat { font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 600; margin-top: 6px; }
+
+  .breakdown { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 32px; }
+  .b-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; border-radius: var(--radius); }
+  .b-card .label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+  .b-card .value { font-family: 'Fraunces', serif; font-weight: 600; font-size: 22px; color: var(--primary); margin-bottom: 4px; }
+  .b-card .value small { font-size: 14px; color: var(--text-muted); font-weight: 400; }
+  .b-card .detail-text { font-size: 12px; color: var(--text-muted); }
+  .b-card.eco .value { color: var(--eco); }
+  .b-card.sec .value { color: var(--sec); }
+  .b-card.inn .value { color: var(--inn); }
+  .bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+  .bar-fill { height: 100%; background: var(--primary); transition: width 0.4s; }
+  .b-card.eco .bar-fill { background: var(--eco); }
+  .b-card.sec .bar-fill { background: var(--sec); }
+  .b-card.inn .bar-fill { background: var(--inn); }
+
+  .flags { background: #fbeae9; border-left: 3px solid var(--risque); padding: 12px 16px; margin-bottom: 24px; border-radius: var(--radius); font-size: 13px; color: #6b2a28; }
+  .flags strong { color: var(--risque); }
+  .flags ul { margin: 6px 0 0 18px; }
+
+  .form-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .form-section h3 { font-family: 'Fraunces', serif; font-size: 16px; color: var(--primary); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .form-section .field { display: grid; grid-template-columns: 200px 1fr; gap: 12px; padding: 6px 0; font-size: 13px; border-bottom: 1px dashed #f0eee7; }
+  .form-section .field:last-child { border-bottom: none; }
+  .form-section .field .k { color: var(--text-muted); font-weight: 500; }
+  .form-section .field .v { color: var(--text); }
+  .form-section .field .v.empty { color: #c0bdb3; font-style: italic; }
+
+  .actions-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+  .btn { padding: 8px 16px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit; transition: all 0.15s; }
+  .btn:hover { border-color: var(--primary); }
+  .btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
+  .btn.primary:hover { background: var(--primary-dark); }
+  .btn.success { background: var(--excellent); color: white; border-color: var(--excellent); }
+  .btn.danger { background: var(--risque); color: white; border-color: var(--risque); }
+  .btn.warning { background: var(--evaluer); color: white; border-color: var(--evaluer); }
+
+  .loading { padding: 40px; text-align: center; color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <div class="brand">Modulimo · Admin</div>
+    <h1>Candidatures locataires</h1>
+  </div>
+  <div class="auth-section" id="authSection">
+    <a class="back" href="./index.html">← Admin principal</a>
+    <input type="email" id="adminEmail" placeholder="courriel admin">
+    <input type="password" id="adminPass" placeholder="mot de passe">
+    <button onclick="signIn()">Se connecter</button>
+  </div>
+</div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="filters">
+      <div class="filter-chip active" data-status="all">Toutes</div>
+      <div class="filter-chip" data-status="recu">Reçues</div>
+      <div class="filter-chip" data-status="en_evaluation">En évaluation</div>
+      <div class="filter-chip" data-status="accepte">Acceptées</div>
+      <div class="filter-chip" data-status="refuse">Refusées</div>
+    </div>
+    <div class="candidates-list" id="candidatesList">
+      <div class="loading">Connectez-vous pour voir les candidatures.</div>
+    </div>
+  </aside>
+
+  <main class="detail" id="detail">
+    <div class="empty-state">
+      <h3>Aucune candidature sélectionnée</h3>
+      <p>Choisissez une candidature dans la liste pour voir le détail.</p>
+    </div>
+  </main>
+</div>
+
+<script>
+  // Hardcoded -- meme projet que js/theme.js de modulimo-home (anon key publique).
+  const SUPABASE_URL = 'https://bpxscgrbxjscicpnheep.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJweHNjZ3JieGpzY2ljcG5oZWVwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzOTYxNzIsImV4cCI6MjA5MDk3MjE3Mn0._M6HHhCwKuuqAzicDZzJp7ul0M3KpDBBDb6ImDWWcLo';
+
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let currentUser = null;
+  let candidatures = [];
+  let currentFilter = 'all';
+  let selectedId = null;
+
+  async function signIn() {
+    const email = document.getElementById('adminEmail').value;
+    const password = document.getElementById('adminPass').value;
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) { alert('Erreur : ' + error.message); return; }
+    currentUser = data.user;
+    renderAuth();
+    loadCandidatures();
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    currentUser = null;
+    renderAuth();
+    document.getElementById('candidatesList').innerHTML = '<div class="loading">Connectez-vous pour voir les candidatures.</div>';
+  }
+
+  function renderAuth() {
+    const sec = document.getElementById('authSection');
+    if (currentUser) {
+      sec.innerHTML = `<a class="back" href="./index.html">← Admin principal</a><span style="opacity:0.85">${currentUser.email}</span><button onclick="signOut()">Déconnexion</button>`;
+    } else {
+      sec.innerHTML = `<a class="back" href="./index.html">← Admin principal</a><input type="email" id="adminEmail" placeholder="courriel admin"><input type="password" id="adminPass" placeholder="mot de passe"><button onclick="signIn()">Se connecter</button>`;
+    }
+  }
+
+  async function loadCandidatures() {
+    const list = document.getElementById('candidatesList');
+    list.innerHTML = '<div class="loading">Chargement...</div>';
+    let q = supabase.from('candidatures')
+      .select('id, created_at, status, score_total, score_category, applicant_name, applicant_email, target_rent, score_breakdown')
+      .is('destroyed_at', null)
+      .order('score_total', { ascending: false, nullsFirst: false });
+    if (currentFilter !== 'all') q = q.eq('status', currentFilter);
+    const { data, error } = await q;
+    if (error) { list.innerHTML = `<div class="loading">Erreur : ${error.message}</div>`; return; }
+    candidatures = data || [];
+    renderList();
+  }
+
+  function renderList() {
+    const list = document.getElementById('candidatesList');
+    if (!candidatures.length) { list.innerHTML = '<div class="loading">Aucune candidature.</div>'; return; }
+    list.innerHTML = candidatures.map(c => `
+      <div class="candidate-item ${selectedId === c.id ? 'selected' : ''}" onclick="selectCandidature('${c.id}')">
+        <div>
+          <div class="candidate-name">${(c.applicant_name || '').trim() || '(sans nom)'}</div>
+          <div class="candidate-meta">${c.applicant_email || ''} · ${c.target_rent ? c.target_rent + ' $' : '—'} · ${formatDate(c.created_at)}</div>
+        </div>
+        ${c.score_total != null ? `<div class="score-badge ${c.score_category || 'a_evaluer'}">${c.score_total}</div>` : '<div class="score-badge">—</div>'}
+      </div>
+    `).join('');
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('fr-CA', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.onclick = () => {
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      currentFilter = chip.dataset.status;
+      loadCandidatures();
+    };
+  });
+
+  async function selectCandidature(id) {
+    selectedId = id;
+    renderList();
+    const detail = document.getElementById('detail');
+    detail.innerHTML = '<div class="loading">Chargement...</div>';
+    const { data, error } = await supabase.from('candidatures').select('*').eq('id', id).single();
+    if (error) { detail.innerHTML = `<div class="loading">Erreur : ${error.message}</div>`; return; }
+    renderDetail(data);
+  }
+
+  function renderDetail(c) {
+    const fd = c.form_data || {};
+    const b = c.score_breakdown || {};
+    const cat = c.score_category || 'a_evaluer';
+    const detail = document.getElementById('detail');
+
+    const flagsHtml = b.flags && b.flags.length ? `<div class="flags"><strong>⚠ Points d'attention :</strong><ul>${b.flags.map(f => `<li>${f}</li>`).join('')}</ul></div>` : '';
+
+    const breakdownCards = b.total != null ? `
+      <div class="breakdown">
+        ${makeBreakdownCard('Capacité financière', b.finances)}
+        ${makeBreakdownCard("Stabilité d'emploi", b.emploi)}
+        ${makeBreakdownCard('Stabilité résidentielle', b.stabilite)}
+        ${makeBreakdownCard('Références', b.references)}
+        ${makeBreakdownCard('Déclarations', b.declarations)}
+        ${makeBreakdownCard('Consentements Loi 25', b.consentements)}
+        ${makeBreakdownCard('Engagement CoHabitat', b.cohabitat)}
+        ${makeBreakdownCard('Valeurs Modulimo', b.valeurs)}
+        ${b.valeurs ? `
+          ${makeBreakdownCard('· Environnement', { score: b.valeurs.environnement, max: 5, details: '' }, 'eco')}
+          ${makeBreakdownCard('· Sécurité', { score: b.valeurs.securite, max: 5, details: '' }, 'sec')}
+          ${makeBreakdownCard('· Innovation', { score: b.valeurs.innovation, max: 5, details: '' }, 'inn')}
+        ` : ''}
+        ${makeBreakdownCard('Complétude', b.completude)}
+      </div>` : '';
+
+    detail.innerHTML = `
+      <div class="detail-header">
+        <div>
+          <h2>${fd.first_name || ''} ${fd.last_name || ''}</h2>
+          <div class="meta">${fd.email || ''} · ${fd.phone_cell || ''}<br>Soumise le ${formatDate(c.created_at)} · Statut : <strong>${c.status}</strong></div>
+        </div>
+        ${c.score_total != null ? `<div class="score-large ${cat}"><div class="num">${c.score_total}<small> /100</small></div><div class="cat">${cat.replace('_',' ')}</div></div>` : ''}
+      </div>
+      ${flagsHtml}
+      <div class="actions-bar">
+        <button class="btn primary" onclick="updateStatus('${c.id}', 'en_evaluation')">En évaluation</button>
+        <button class="btn success" onclick="updateStatus('${c.id}', 'accepte')">Accepter</button>
+        <button class="btn warning" onclick="updateStatus('${c.id}', 'refuse')">Refuser</button>
+        <button class="btn danger" onclick="destroyPii('${c.id}')">Détruire les données (Loi 25)</button>
+      </div>
+      ${breakdownCards}
+      ${makeFormSection('Identité', [
+        ['Nom complet', `${fd.first_name || ''} ${fd.last_name || ''}`],
+        ['Courriel', fd.email], ['Téléphone cellulaire', fd.phone_cell],
+        ['Téléphone jour', fd.phone_day], ['Année de naissance', fd.birth_year],
+        ['Statut au Canada', fd.status_canada]
+      ])}
+      ${makeFormSection('Co-demandeur', [
+        ['Nom', fd.co_name], ['Lien', fd.co_relation], ['Courriel', fd.co_email], ['Téléphone', fd.co_phone]
+      ])}
+      ${makeFormSection('Occupants', [
+        ['Adultes', fd.adults], ['Enfants', fd.children], ['Âges', fd.child_ages], ['Animaux', fd.pets]
+      ])}
+      ${makeFormSection('Logement actuel', [
+        ['Adresse', fd.current_address], ['Depuis', formatDate(fd.current_since)],
+        ['Loyer actuel', fd.current_rent ? fd.current_rent + ' $' : ''],
+        ['Statut', fd.current_tenancy], ['Propriétaire', fd.current_landlord],
+        ['Tél. propriétaire', fd.current_landlord_phone], ['Raison du déménagement', fd.move_reason]
+      ])}
+      ${makeFormSection('Emploi et revenus', [
+        ['Employeur', fd.employer], ['Poste', fd.position],
+        ['Depuis', formatDate(fd.employment_since)], ['Type', fd.employment_type],
+        ['Revenu annuel', fd.annual_income ? fd.annual_income + ' $' : ''],
+        ['Co-employeur', fd.co_employer], ['Co-revenu', fd.co_income ? fd.co_income + ' $' : ''],
+        ['Loyer convoité', fd.target_rent ? fd.target_rent + ' $' : ''],
+        ["Date d'occupation", formatDate(fd.move_in_date)]
+      ])}
+      ${makeFormSection('Références', [
+        ['Réf. 1', `${fd.ref1_name || '—'} (${fd.ref1_relation || ''}) · ${fd.ref1_phone || ''}`],
+        ['Réf. 2', `${fd.ref2_name || '—'} (${fd.ref2_relation || ''}) · ${fd.ref2_phone || ''}`]
+      ])}
+      ${makeFormSection('CoHabitat', [
+        ['Aisance numérique', fd.digital_comfort ? `${fd.digital_comfort}/5` : ''],
+        ['Mode de paiement', fd.payment_pref], ['Communication', fd.comm_pref],
+        ['Services intéressés', listChecks(fd, ['ch_salle_commune','ch_autopartage','ch_babillard','ch_atelier','ch_reseau','ch_evenements'])]
+      ])}
+      ${makeFormSection('Valeurs', [
+        ['Environnement (importance)', fd.eco_importance ? `${fd.eco_importance}/5` : ''],
+        ['Habitudes éco', listChecks(fd, ['eco_recyclage','eco_compost','eco_transport','eco_ve','eco_local','eco_economie','eco_jardinage'])],
+        ['Motivation éco', fd.eco_motivation],
+        ['Sécurité (importance)', fd.sec_importance ? `${fd.sec_importance}/5` : ''],
+        ['Position caméras', fd.sec_cameras],
+        ['Comportement collectif', fd.sec_behavior ? `${fd.sec_behavior}/5` : ''],
+        ['Innovation (ouverture)', fd.inn_openness ? `${fd.inn_openness}/5` : ''],
+        ['Sujets innov.', listChecks(fd, ['inn_mobilite','inn_iot','inn_agriculture','inn_energie','inn_communaute','inn_diy'])],
+        ['Idée proposée', fd.inn_idea]
+      ])}
+      ${makeFormSection('Déclarations', [
+        ['TAL', fd.dec_tal], ['Expulsion', fd.dec_eviction],
+        ['Faillite', fd.dec_bankruptcy], ['Poursuite en cours', fd.dec_lawsuit],
+        ['Explications', fd.dec_explain]
+      ])}
+      ${makeFormSection('Consentements (Loi 25)', [
+        ['Crédit', (c.consents && c.consents.credit) ? '✓' : '✗'],
+        ['Employeur', (c.consents && c.consents.employer) ? '✓' : '✗'],
+        ['Propriétaire', (c.consents && c.consents.landlord) ? '✓' : '✗'],
+        ['Références', (c.consents && c.consents.references) ? '✓' : '✗'],
+        ['Évaluation auto', (c.consents && c.consents.automated) ? '✓' : '✗'],
+        ['Date du consentement', formatDate(c.consents && c.consents.consented_at)]
+      ])}
+      ${makeFormSection('Notes admin', [
+        ['Notes', `<textarea id="adminNotesTextarea" rows="4" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit">${c.admin_notes || ''}</textarea><button class="btn" style="margin-top:6px" onclick="saveNotes('${c.id}')">Enregistrer notes</button>`]
+      ])}
+    `;
+  }
+
+  function makeBreakdownCard(label, b, cssClass = '') {
+    if (!b) return '';
+    const pct = b.max ? (b.score / b.max) * 100 : 0;
+    return `<div class="b-card ${cssClass}"><div class="label">${label}</div><div class="value">${b.score}<small> / ${b.max}</small></div><div class="detail-text">${b.details || ''}</div><div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div></div>`;
+  }
+
+  function makeFormSection(title, fields) {
+    return `<div class="form-section"><h3>${title}</h3>${fields.map(([k, v]) => `<div class="field"><div class="k">${k}</div><div class="v ${(v == null || v === '' || v === undefined) ? 'empty' : ''}">${(v == null || v === '') ? '—' : v}</div></div>`).join('')}</div>`;
+  }
+
+  function listChecks(fd, keys) {
+    const labels = {
+      ch_salle_commune: 'salle commune', ch_autopartage: 'auto-partage',
+      ch_babillard: 'babillard', ch_atelier: 'atelier', ch_reseau: 'réseau', ch_evenements: 'événements',
+      eco_recyclage: 'recyclage', eco_compost: 'compost', eco_transport: 'transport durable',
+      eco_ve: 'VÉ', eco_local: 'local', eco_economie: 'économies', eco_jardinage: 'jardinage',
+      inn_mobilite: 'mobilité', inn_iot: 'IoT', inn_agriculture: 'agriculture urbaine',
+      inn_energie: 'énergies', inn_communaute: 'communauté', inn_diy: 'DIY'
+    };
+    const active = keys.filter(k => fd[k] === true || fd[k] === 'on' || fd[k] === 'true');
+    return active.length ? active.map(k => labels[k] || k).join(', ') : '—';
+  }
+
+  async function updateStatus(id, status) {
+    const updates = { status, reviewed_at: new Date().toISOString(), reviewed_by: currentUser ? currentUser.id : null };
+    if (status === 'accepte' || status === 'refuse') {
+      updates.decision_at = new Date().toISOString();
+    }
+    const { error } = await supabase.from('candidatures').update(updates).eq('id', id);
+    if (error) { alert('Erreur : ' + error.message); return; }
+    await loadCandidatures();
+    selectCandidature(id);
+  }
+
+  async function saveNotes(id) {
+    const notes = document.getElementById('adminNotesTextarea').value;
+    const { error } = await supabase.from('candidatures').update({ admin_notes: notes }).eq('id', id);
+    if (error) { alert('Erreur : ' + error.message); return; }
+    alert('Notes enregistrées.');
+  }
+
+  async function destroyPii(id) {
+    if (!confirm('Détruire définitivement les renseignements personnels de cette candidature ? Cette action est irréversible et conforme à la Loi 25.')) return;
+    const { error } = await supabase.rpc('destroy_candidature_pii', { p_candidature_id: id });
+    if (error) { alert('Erreur : ' + error.message); return; }
+    alert('Données personnelles détruites.');
+    selectedId = null;
+    await loadCandidatures();
+    document.getElementById('detail').innerHTML = '<div class="empty-state"><h3>Données détruites</h3></div>';
+  }
+
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (session) {
+      currentUser = session.user;
+      renderAuth();
+      loadCandidatures();
+    }
+  });
+</script>
+</body>
+</html>

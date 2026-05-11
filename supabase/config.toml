@@ -1,10 +1,10 @@
-# Supabase project config — modulimo-admin (centrale Modulimo)
+# Supabase project config -- modulimo-admin (centrale Modulimo)
 # Lu par la CLI au moment de `supabase functions deploy`. Limite a la
 # config strictement necessaire ; le reste reste sur les defauts.
 
 project_id = "bpxscgrbxjscicpnheep"
 
-# ── Edge Functions ────────────────────────────────────────────────────
+# Edge Functions -------------------------------------------------------
 # verify_jwt = false desactive la verification JWT au niveau du gateway
 # Supabase pour cette fonction. Necessaire car :
 #   1. /health doit etre joignable sans auth (probe client). Avec
@@ -14,15 +14,23 @@ project_id = "bpxscgrbxjscicpnheep"
 #      /transfer-to-dep, /record-real-payment) signent les JWT avec la
 #      cle de l'immeuble appelant (Auth Supabase de cohabitat), pas
 #      avec la cle JWT du projet central. Donc le gateway central ne
-#      peut PAS valider ces JWT — la verification est faite par le
+#      peut PAS valider ces JWT -- la verification est faite par le
 #      code de la fonction (resolve.ts) via JWKS distantes.
 # La fonction enforce l'auth elle-meme : seul /health est public, tous
 # les autres endpoints rejettent les requetes sans Bearer valide.
 [functions.finance-bridge]
 verify_jwt = false
 
-# loi25-process : meme raisonnement que finance-bridge — on fait notre
+# loi25-process : meme raisonnement que finance-bridge -- on fait notre
 # propre validation JWT (resolve via /auth/v1/user). /health doit aussi
 # etre public (no auth requise pour le ping).
 [functions.loi25-process]
+verify_jwt = false
+
+# submit-candidature : le formulaire de candidature est public (les
+# candidats ne sont pas authentifies). La fonction valide les champs
+# obligatoires, calcule le score cote serveur, insere via service_role.
+# Aucun secret a exposer cote client : seules l'URL Supabase et l'anon
+# key (deja publiques) sont utilisees par le frontend.
+[functions.submit-candidature]
 verify_jwt = false
