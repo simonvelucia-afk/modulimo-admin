@@ -2,13 +2,12 @@
 // MODULIMO -- Edge Function : submit-candidature
 // ============================================================
 // Recoit le formulaire public, calcule le score cote serveur
-// (jamais expose au candidat), insere dans public.candidatures.
+// (jamais expose au candidat), insere dans public.candidatures,
+// puis notifie le gestionnaire de l'immeuble par courriel
+// (fire-and-forget, ne bloque pas la reponse au candidat).
 //
 // Deploiement :
 //   supabase functions deploy submit-candidature --no-verify-jwt
-//
-// verify_jwt = false est aussi declare dans supabase/config.toml.
-// Necessaire car les candidats ne sont pas authentifies.
 // ============================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -33,9 +32,7 @@ interface ScoreBreakdown {
   cohabitat: { score: number; max: number; details: string };
   valeurs: {
     score: number; max: number;
-    environnement: number;
-    securite: number;
-    innovation: number;
+    environnement: number; securite: number; innovation: number;
     details: string;
   };
   completude: { score: number; max: number; details: string };
@@ -48,11 +45,9 @@ function num(v: unknown): number {
   const n = parseFloat(String(v ?? '').replace(/[^\d.-]/g, ''));
   return isNaN(n) ? 0 : n;
 }
-
 function bool(v: unknown): boolean {
   return v === true || v === 'true' || v === 'on' || v === 1 || v === '1';
 }
-
 function monthsSince(dateStr: unknown): number {
   if (!dateStr) return 0;
   const d = new Date(String(dateStr));
@@ -66,7 +61,6 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   // deno-lint-ignore no-explicit-any
   const breakdown: any = {};
 
-  // 1. CAPACITE FINANCIERE (22)
   const targetRent = num(formData.target_rent);
   const totalAnnualIncome = num(formData.annual_income) + num(formData.co_income);
   const monthlyIncome = totalAnnualIncome / 12;
@@ -85,18 +79,12 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   }
   breakdown.finances = { score: financesScore, max: 22, details: financesDetails };
 
-  // 2. STABILITE D'EMPLOI (10)
   const empType = String(formData.employment_type ?? '');
   const empMonths = monthsSince(formData.employment_since);
   let empScore = 0;
   const typeScores: Record<string, number> = {
-    permanent_temps_plein: 6,
-    permanent_temps_partiel: 4,
-    autonome: 4,
-    retraite: 5,
-    temporaire: 2,
-    etudiant: 2,
-    autre: 1,
+    permanent_temps_plein: 6, permanent_temps_partiel: 4, autonome: 4,
+    retraite: 5, temporaire: 2, etudiant: 2, autre: 1,
   };
   empScore += typeScores[empType] ?? 0;
   if (empMonths >= 36) empScore += 4;
@@ -106,7 +94,6 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   empScore = Math.min(empScore, 10);
   breakdown.emploi = { score: empScore, max: 10, details: `${empType || 'non precise'} · ${Math.round(empMonths)} mois` };
 
-  // 3. STABILITE RESIDENTIELLE (8)
   const residenceMonths = monthsSince(formData.current_since);
   let resScore = 0;
   if (residenceMonths >= 36) resScore = 8;
@@ -116,7 +103,6 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   else if (residenceMonths > 0) resScore = 1;
   breakdown.stabilite = { score: resScore, max: 8, details: `${Math.round(residenceMonths)} mois a l'adresse actuelle` };
 
-  // 4. REFERENCES (6)
   let refScore = 0;
   const refsComplete: string[] = [];
   if (formData.current_landlord_phone && formData.current_landlord) { refScore += 2; refsComplete.push("proprietaire actuel"); }
@@ -124,7 +110,6 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   if (formData.ref2_name && formData.ref2_phone) { refScore += 2; refsComplete.push("ref. 2"); }
   breakdown.references = { score: refScore, max: 6, details: refsComplete.length ? refsComplete.join(", ") : "aucune reference complete" };
 
-  // 5. DECLARATIONS (10)
   let decScore = 10;
   const decFlags: string[] = [];
   if (formData.dec_tal === 'oui')        { decScore -= 2; decFlags.push("TAL"); }
@@ -134,7 +119,6 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   decScore = Math.max(0, decScore);
   breakdown.declarations = { score: decScore, max: 10, details: decFlags.length ? `Signalements : ${decFlags.join(", ")}` : "Aucun signalement" };
 
-  // 6. CONSENTEMENTS (6)
   let consScore = 0;
   if (bool(formData.consent_credit))     consScore += 2;
   if (bool(formData.consent_employer))   consScore += 1;
@@ -142,7 +126,6 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   if (bool(formData.consent_references)) consScore += 1;
   breakdown.consentements = { score: consScore, max: 6, details: `${consScore}/6 consentements donnes` };
 
-  // 7. ENGAGEMENT COHABITAT (18)
   let chScore = 0;
   const digital = num(formData.digital_comfort);
   if (digital >= 4) chScore += 3;
@@ -159,7 +142,6 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
   chScore = Math.min(chScore, 18);
   breakdown.cohabitat = { score: chScore, max: 18, details: `${chCount}/${chServices.length} services · paiement: ${formData.payment_pref || '--'}` };
 
-  // 8. VALEURS (15 = 5+5+5)
   let ecoScore = 0;
   const ecoImp = num(formData.eco_importance);
   if (ecoImp >= 4) ecoScore += 2;
@@ -197,31 +179,200 @@ function calculateScore(formData: Record<string, unknown>): ScoreBreakdown {
     details: `Eco ${ecoScore}/5 · Sec ${secScore}/5 · Innov ${innScore}/5`,
   };
 
-  // 9. COMPLETUDE (5)
   const requiredFields = ['last_name','first_name','email','phone_cell','current_address','employer','annual_income','target_rent'];
   const filled = requiredFields.filter(f => formData[f] && String(formData[f]).trim() !== '').length;
   const compScore = Math.round((filled / requiredFields.length) * 5);
   breakdown.completude = { score: compScore, max: 5, details: `${filled}/${requiredFields.length} champs critiques remplis` };
 
-  // TOTAL
   const total = financesScore + empScore + resScore + refScore + decScore + consScore + chScore + valeursTotal + compScore;
   let category: 'excellent' | 'bon' | 'a_evaluer' | 'a_risque';
   if (total >= 80) category = 'excellent';
   else if (total >= 65) category = 'bon';
   else if (total >= 50) category = 'a_evaluer';
   else category = 'a_risque';
-
   if (flags.some(f => f.includes("Expulsion") || f.includes("Poursuite"))) {
     if (category === 'excellent') category = 'bon';
     else if (category === 'bon') category = 'a_evaluer';
   }
-
   breakdown.total = total;
   breakdown.category = category;
   breakdown.flags = flags;
   return breakdown as ScoreBreakdown;
 }
 
+// ============================================================
+// Construction du courriel HTML envoye au gestionnaire
+// ============================================================
+// deno-lint-ignore no-explicit-any
+function buildEmailHtml(candidatureId: string, buildingName: string, fd: any, score: ScoreBreakdown, consents: any): string {
+  const catColors: Record<string, string> = {
+    excellent: '#2f7a4d', bon: '#1f4e79', a_evaluer: '#b8860b', a_risque: '#a94442',
+  };
+  const catColor = catColors[score.category] || '#666';
+  const flagsHtml = score.flags && score.flags.length
+    ? `<div style="background:#fbeae9;border-left:3px solid #a94442;padding:12px 16px;margin:16px 0;border-radius:4px;color:#6b2a28;font-size:14px"><strong>⚠ Points d'attention :</strong><br>${score.flags.map(f => '• ' + f).join('<br>')}</div>`
+    : '';
+  const row = (label: string, b: { score: number; max: number; details?: string }) =>
+    `<tr><td style="padding:6px 0;border-bottom:1px solid #f0eee7">${label}<div style="font-size:11px;color:#888">${b.details || ''}</div></td><td style="text-align:right;padding:6px 0;border-bottom:1px solid #f0eee7;white-space:nowrap"><strong>${b.score}</strong> / ${b.max}</td></tr>`;
+
+  return `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;line-height:1.55;color:#1a1a18;background:#f4f3f0;margin:0;padding:24px">
+<div style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #d0cec8;border-radius:8px;overflow:hidden">
+  <div style="background:#1e3d32;color:#fff;padding:24px 32px">
+    <div style="font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.7;margin-bottom:4px">Modulimo · ${buildingName}</div>
+    <h1 style="margin:0;font-size:22px;font-weight:800;letter-spacing:-.02em">Nouvelle candidature locataire</h1>
+  </div>
+
+  <div style="padding:24px 32px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+      <div>
+        <h2 style="margin:0 0 4px;font-size:20px">${fd.first_name || ''} ${fd.last_name || ''}</h2>
+        <div style="font-size:14px;color:#5c5c56"><a href="mailto:${fd.email || ''}" style="color:#2d5a4a">${fd.email || ''}</a> · ${fd.phone_cell || ''}</div>
+      </div>
+      <div style="background:${catColor};color:#fff;padding:8px 16px;border-radius:4px;text-align:center;min-width:100px">
+        <div style="font-size:24px;font-weight:800;line-height:1">${score.total}<span style="font-size:13px;opacity:.8">/100</span></div>
+        <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-top:4px">${score.category.replace('_',' ')}</div>
+      </div>
+    </div>
+
+    ${flagsHtml}
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Détail du score</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      ${row('Capacité financière', score.finances)}
+      ${row("Stabilité d'emploi", score.emploi)}
+      ${row('Stabilité résidentielle', score.stabilite)}
+      ${row('Références', score.references)}
+      ${row('Déclarations', score.declarations)}
+      ${row('Consentements Loi 25', score.consentements)}
+      ${row('Engagement CoHabitat', score.cohabitat)}
+      ${row('Valeurs Modulimo (Eco/Séc/Innov)', score.valeurs)}
+      ${row('Complétude du dossier', score.completude)}
+    </table>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Identité et ménage</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li><strong>Né en :</strong> ${fd.birth_year || '—'} · <strong>Statut Canada :</strong> ${fd.status_canada || '—'}</li>
+      <li><strong>Tél. jour :</strong> ${fd.phone_day || '—'}</li>
+      <li><strong>Co-demandeur :</strong> ${fd.co_name || '—'} ${fd.co_relation ? '(' + fd.co_relation + ')' : ''} · ${fd.co_phone || ''} · ${fd.co_email || ''}</li>
+      <li><strong>Ménage :</strong> ${fd.adults || '?'} adulte(s) + ${fd.children || '0'} enfant(s)${fd.child_ages ? ' — âges ' + fd.child_ages : ''}</li>
+      <li><strong>Animaux :</strong> ${fd.pets || 'aucun'}</li>
+    </ul>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Logement actuel</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li>${fd.current_address || '—'}</li>
+      <li><strong>Statut :</strong> ${fd.current_tenancy || '—'} depuis ${fd.current_since || '—'}</li>
+      <li><strong>Loyer actuel :</strong> ${fd.current_rent ? fd.current_rent + ' $' : '—'}</li>
+      <li><strong>Propriétaire actuel :</strong> ${fd.current_landlord || '—'} ${fd.current_landlord_phone ? '· ' + fd.current_landlord_phone : ''}</li>
+      ${fd.move_reason ? `<li><strong>Raison du déménagement :</strong> ${fd.move_reason}</li>` : ''}
+    </ul>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Emploi et revenus</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li><strong>${fd.employer || '—'}</strong> — ${fd.position || '—'} (${fd.employment_type || '—'}) depuis ${fd.employment_since || '—'}</li>
+      <li><strong>Revenu annuel :</strong> ${fd.annual_income ? fd.annual_income + ' $' : '—'}</li>
+      <li><strong>Co-demandeur :</strong> ${fd.co_employer || '—'} · ${fd.co_income ? fd.co_income + ' $' : '—'}</li>
+      <li><strong>Loyer convoité :</strong> <span style="font-weight:700">${fd.target_rent ? fd.target_rent + ' $' : '—'}</span> · occupation souhaitée ${fd.move_in_date || '—'}</li>
+    </ul>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Références</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li>${fd.ref1_name || '—'} ${fd.ref1_relation ? '(' + fd.ref1_relation + ')' : ''} · ${fd.ref1_phone || ''} · ${fd.ref1_email || ''}</li>
+      <li>${fd.ref2_name || '—'} ${fd.ref2_relation ? '(' + fd.ref2_relation + ')' : ''} · ${fd.ref2_phone || ''} · ${fd.ref2_email || ''}</li>
+    </ul>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Déclarations</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li>TAL : <strong>${fd.dec_tal || '—'}</strong> · Expulsion : <strong>${fd.dec_eviction || '—'}</strong> · Faillite : <strong>${fd.dec_bankruptcy || '—'}</strong> · Poursuite : <strong>${fd.dec_lawsuit || '—'}</strong></li>
+      ${fd.dec_explain ? `<li><strong>Explications :</strong> ${fd.dec_explain}</li>` : ''}
+    </ul>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Préférences CoHabitat</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li>Aisance numérique : ${fd.digital_comfort ? fd.digital_comfort + '/5' : '—'}</li>
+      <li>Mode de paiement préféré : ${fd.payment_pref || '—'}</li>
+      <li>Communication préférée : ${fd.comm_pref || '—'}</li>
+    </ul>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Valeurs Modulimo</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li>Environnement : importance ${fd.eco_importance || '—'}/5 · ${score.valeurs.environnement}/5 pts</li>
+      <li>Sécurité : importance ${fd.sec_importance || '—'}/5 · caméras = ${fd.sec_cameras || '—'} · ${score.valeurs.securite}/5 pts</li>
+      <li>Innovation : ouverture ${fd.inn_openness || '—'}/5 · ${score.valeurs.innovation}/5 pts</li>
+      ${fd.inn_idea ? `<li><strong>Idée proposée :</strong> ${fd.inn_idea}</li>` : ''}
+    </ul>
+
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1e3d32;border-bottom:1px solid #d0cec8;padding-bottom:6px">Consentements Loi 25</h3>
+    <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0">
+      <li>Vérif. crédit : ${consents.credit ? '✅' : '❌'} · Employeur : ${consents.employer ? '✅' : '❌'} · Propriétaire : ${consents.landlord ? '✅' : '❌'} · Références : ${consents.references ? '✅' : '❌'}</li>
+      <li>Évaluation automatisée : ${consents.automated ? '✅' : '❌'} · Déclaration véridique : ${consents.truthful ? '✅' : '❌'}</li>
+    </ul>
+
+    <div style="margin-top:32px;padding-top:16px;border-top:1px solid #d0cec8;font-size:11px;color:#888;line-height:1.6">
+      <strong>Référence :</strong> ${candidatureId}<br>
+      <strong>Loi 25 :</strong> Conservation 12 mois maximum, sauf candidature acceptée. Répondre au candidat avec le bouton « Répondre » — le reply-to pointe vers son courriel.
+    </div>
+  </div>
+</div></body></html>`;
+}
+
+// ============================================================
+// Notification fire-and-forget au gestionnaire de l'immeuble
+// ============================================================
+async function notifyManager(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  candidatureId: string,
+  buildingId: string | null,
+  // deno-lint-ignore no-explicit-any
+  formData: any,
+  score: ScoreBreakdown,
+  // deno-lint-ignore no-explicit-any
+  consents: any,
+): Promise<void> {
+  if (!buildingId) {
+    console.log("notifyManager: no building_id, skipping email");
+    return;
+  }
+  const { data: building, error: buildingErr } = await supabase
+    .from('building_registry')
+    .select('name, notification_email')
+    .eq('id', buildingId)
+    .single();
+  if (buildingErr || !building?.notification_email) {
+    console.log("notifyManager: no notification_email for building", buildingId, buildingErr);
+    return;
+  }
+
+  const html = buildEmailHtml(candidatureId, building.name, formData, score, consents);
+  const subject = `Candidature ${building.name} — ${formData.first_name || ''} ${formData.last_name || ''} (${score.total}/100, ${score.category.replace('_', ' ')})`;
+
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+      'apikey': SUPABASE_SERVICE_KEY,
+    },
+    body: JSON.stringify({
+      to: building.notification_email,
+      subject,
+      html,
+      reply_to: formData.email || undefined,
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error("notifyManager: send-email failed", res.status, errorText);
+  } else {
+    console.log("notifyManager: email sent to", building.notification_email);
+  }
+}
+
+// ============================================================
+// HANDLER
+// ============================================================
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -249,7 +400,6 @@ serve(async (req: Request) => {
 
     const score = calculateScore(formData);
 
-    // Hash IP (Loi 25 : jamais l'IP brute)
     const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? "";
     let ipHash: string | null = null;
     if (ip) {
@@ -301,7 +451,10 @@ serve(async (req: Request) => {
       });
     }
 
-    // Reponse au candidat -- JAMAIS le score
+    // Notification fire-and-forget -- ne bloque pas la reponse au candidat
+    notifyManager(supabase, data.id, body.building_id || null, formData, score, consents)
+      .catch(err => console.error("notifyManager threw:", err));
+
     return new Response(JSON.stringify({
       success: true,
       candidature_id: data.id,
