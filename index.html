@@ -138,6 +138,7 @@
     <div class="sidebar">
       <div class="nav-item active" onclick="nav('dashboard')">📊 Tableau de bord</div>
       <div class="nav-item" onclick="nav('clients')">🏢 Clients</div>
+      <div class="nav-item" onclick="nav('demandes')">📊 Demandes (stats)</div>
       <div class="nav-item" onclick="nav('balances')">💳 Soldes</div>
       <div class="nav-item" onclick="nav('contracts')">📄 Contrats</div>
       <div class="nav-item" onclick="nav('invoices')">🧾 Factures</div>
@@ -184,6 +185,44 @@
           <table>
             <thead><tr><th>Nom</th><th>Type</th><th>Actif</th><th>Contact</th><th>Modules</th><th>Actions</th></tr></thead>
             <tbody id="clients-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- DEMANDES (stats agregees seulement) -->
+      <!-- Modulimo central n'autorise pas les locataires individuels par
+           immeuble (c'est l'admin CoHabitat de chaque immeuble qui le fait).
+           Cet onglet n'expose donc que les statistiques agregees pour
+           le suivi du reseau global. -->
+      <div id="page-demandes" class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div class="page-title" style="margin:0">Demandes — statistiques réseau</div>
+          <button class="btn btn-secondary btn-sm" onclick="loadDemandesStats()">↻ Rafraîchir</button>
+        </div>
+        <div style="background:rgba(200,169,110,.08);border:1px solid rgba(200,169,110,.25);border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:var(--text2);">
+          <span style="color:var(--accent);font-weight:600;">📌 Politique :</span> L'approbation des candidatures de location se fait dans <strong>l'onglet Demandes du CoHabitat de chaque immeuble</strong>. Modulimo central ne décide pas pour le compte d'un propriétaire — cette page agrège uniquement les statistiques.
+        </div>
+        <div class="stats-grid" id="demandes-kpis" style="margin-bottom:20px;"></div>
+        <div class="card" style="padding:0;margin-bottom:20px;">
+          <div class="card-title" style="padding:14px 16px 0;">Par immeuble</div>
+          <table>
+            <thead><tr>
+              <th>Immeuble</th>
+              <th style="text-align:right">Reçues</th>
+              <th style="text-align:right">En éval.</th>
+              <th style="text-align:right">Acceptées</th>
+              <th style="text-align:right">Refusées</th>
+              <th style="text-align:right">Score moyen</th>
+              <th style="text-align:right">Loyer cible moyen</th>
+            </tr></thead>
+            <tbody id="demandes-by-building"></tbody>
+          </table>
+        </div>
+        <div class="card" style="padding:0;">
+          <div class="card-title" style="padding:14px 16px 0;">Par mois (12 derniers)</div>
+          <table>
+            <thead><tr><th>Mois</th><th style="text-align:right">Reçues</th><th style="text-align:right">Acceptées</th><th style="text-align:right">Refusées</th></tr></thead>
+            <tbody id="demandes-by-month"></tbody>
           </table>
         </div>
       </div>
@@ -951,6 +990,7 @@ function nav(page) {
   event.target.classList.add('active');
   if (page === 'dashboard') loadDashboard();
   if (page === 'clients')   loadClients();
+  if (page === 'demandes')  loadDemandesStats();
   if (page === 'balances')  loadBalances();
   if (page === 'contracts') loadContracts();
   if (page === 'invoices')  loadInvoices();
@@ -4008,6 +4048,104 @@ async function saveNetwork() {
   toast('Réseau créé', 'success');
   closeModal('modal-network');
   loadNetworks();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DEMANDES — stats agregees uniquement (lecture seule)
+// ═══════════════════════════════════════════════════════════
+// L'approbation des candidatures est deleguee a l'admin CoHabitat
+// de chaque immeuble. Modulimo central ne fait que l'observation
+// agregee : volume, taux d'acceptation, score moyen, par immeuble
+// et par mois. Source : vue public.candidatures_analytics.
+async function loadDemandesStats() {
+  const kpiEl = document.getElementById('demandes-kpis');
+  const buildingEl = document.getElementById('demandes-by-building');
+  const monthEl = document.getElementById('demandes-by-month');
+  kpiEl.innerHTML = '';
+  buildingEl.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Chargement…</td></tr>';
+  monthEl.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text3)">Chargement…</td></tr>';
+
+  const [statsRes, buildRes] = await Promise.all([
+    sb.from('candidatures_analytics').select('*'),
+    sb.from('building_registry').select('id,name')
+  ]);
+  if (statsRes.error) { toast('Erreur stats: ' + statsRes.error.message, 'error'); return; }
+  const rows = statsRes.data || [];
+  const buildings = new Map((buildRes.data || []).map(b => [b.id, b.name]));
+
+  // KPIs globaux
+  let total = 0, accepted = 0, refused = 0, pending = 0;
+  rows.forEach(r => {
+    total += Number(r.total) || 0;
+    if (r.status === 'accepte') accepted += Number(r.total) || 0;
+    else if (r.status === 'refuse') refused += Number(r.total) || 0;
+    else if (r.status === 'recu' || r.status === 'en_evaluation') pending += Number(r.total) || 0;
+  });
+  const acceptRate = (accepted + refused) > 0 ? (100 * accepted / (accepted + refused)).toFixed(0) + ' %' : '—';
+  kpiEl.innerHTML = [
+    { num: total,       lbl: 'Candidatures (12 mois max)' },
+    { num: pending,     lbl: 'À traiter' },
+    { num: accepted,    lbl: 'Acceptées' },
+    { num: acceptRate,  lbl: 'Taux d\'acceptation' }
+  ].map(s => `<div class="stat-card"><div class="stat-num">${s.num}</div><div class="stat-lbl">${s.lbl}</div></div>`).join('');
+
+  // Aggregation par immeuble
+  const byB = new Map();
+  rows.forEach(r => {
+    const k = r.building_id || '__none__';
+    if (!byB.has(k)) byB.set(k, { recu:0, en_evaluation:0, accepte:0, refuse:0, scoreSum:0, scoreN:0, rentSum:0, rentN:0 });
+    const acc = byB.get(k);
+    const n = Number(r.total) || 0;
+    if (r.status === 'recu')          acc.recu += n;
+    if (r.status === 'en_evaluation') acc.en_evaluation += n;
+    if (r.status === 'accepte')       acc.accepte += n;
+    if (r.status === 'refuse')        acc.refuse += n;
+    if (r.avg_score != null)       { acc.scoreSum += Number(r.avg_score) * n; acc.scoreN += n; }
+    if (r.avg_target_rent != null) { acc.rentSum  += Number(r.avg_target_rent) * n; acc.rentN += n; }
+  });
+  const buildingRows = [...byB.entries()].map(([id, a]) => ({
+    name: id === '__none__' ? '— (aucun immeuble)' : (buildings.get(id) || id.slice(0,8) + '…'),
+    ...a,
+    avgScore: a.scoreN ? (a.scoreSum / a.scoreN).toFixed(1) : '—',
+    avgRent:  a.rentN  ? (a.rentSum  / a.rentN ).toFixed(0) + ' $' : '—'
+  })).sort((x, y) => (y.recu + y.en_evaluation + y.accepte + y.refuse) - (x.recu + x.en_evaluation + x.accepte + x.refuse));
+  buildingEl.innerHTML = buildingRows.length ? buildingRows.map(r => `
+    <tr>
+      <td>${escapeHtmlStats(r.name)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.recu}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.en_evaluation}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.accepte}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.refuse}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.avgScore}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.avgRent}</td>
+    </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:18px;">Aucune candidature</td></tr>';
+
+  // Aggregation par mois
+  const byM = new Map();
+  rows.forEach(r => {
+    const k = (r.month || '').slice(0, 7);
+    if (!k) return;
+    if (!byM.has(k)) byM.set(k, { total:0, accepte:0, refuse:0 });
+    const acc = byM.get(k);
+    const n = Number(r.total) || 0;
+    acc.total += n;
+    if (r.status === 'accepte') acc.accepte += n;
+    if (r.status === 'refuse')  acc.refuse  += n;
+  });
+  const monthRows = [...byM.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 12);
+  monthEl.innerHTML = monthRows.length ? monthRows.map(([m, a]) => `
+    <tr>
+      <td>${m}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${a.total}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${a.accepte}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${a.refuse}</td>
+    </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:18px;">—</td></tr>';
+}
+
+function escapeHtmlStats(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[ch]));
 }
 
 // HELPERS
