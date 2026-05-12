@@ -138,7 +138,6 @@
     <div class="sidebar">
       <div class="nav-item active" onclick="nav('dashboard')">📊 Tableau de bord</div>
       <div class="nav-item" onclick="nav('clients')">🏢 Clients</div>
-      <div class="nav-item" onclick="nav('demandes')">📋 Demandes</div>
       <div class="nav-item" onclick="nav('balances')">💳 Soldes</div>
       <div class="nav-item" onclick="nav('contracts')">📄 Contrats</div>
       <div class="nav-item" onclick="nav('invoices')">🧾 Factures</div>
@@ -187,50 +186,6 @@
             <tbody id="clients-tbody"></tbody>
           </table>
         </div>
-      </div>
-
-      <!-- DEMANDES (Candidatures locataires) -->
-      <div id="page-demandes" class="page">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:10px;flex-wrap:wrap;">
-          <div class="page-title" style="margin:0">Demandes de location</div>
-          <div style="display:flex;gap:10px;align-items:center;">
-            <select id="demandes-building-filter" onchange="renderDemandes()" style="padding:8px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px;">
-              <option value="">Tous les immeubles</option>
-            </select>
-            <select id="demandes-status-filter" onchange="renderDemandes()" style="padding:8px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px;">
-              <option value="ouvertes" selected>À traiter</option>
-              <option value="">Toutes</option>
-              <option value="recu">Reçues</option>
-              <option value="en_evaluation">En évaluation</option>
-              <option value="accepte">Acceptées</option>
-              <option value="refuse">Refusées</option>
-              <option value="retire">Retirées</option>
-              <option value="expire">Expirées</option>
-            </select>
-            <button class="btn btn-secondary btn-sm" onclick="loadDemandes()">↻ Rafraîchir</button>
-          </div>
-        </div>
-        <div class="card" style="padding:0">
-          <table>
-            <thead>
-              <tr>
-                <th>Candidat</th>
-                <th>Courriel</th>
-                <th>Immeuble</th>
-                <th style="text-align:right">Loyer cible</th>
-                <th style="text-align:right">Revenu annuel</th>
-                <th>Score</th>
-                <th>Statut</th>
-                <th>Reçue le</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="demandes-tbody">
-              <tr><td colspan="9" style="text-align:center;color:var(--text3)">Chargement…</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div id="demandes-summary" style="margin-top:16px;font-size:13px;color:var(--text2);"></div>
       </div>
 
       <!-- SOLDES (Phase 3) -->
@@ -996,7 +951,6 @@ function nav(page) {
   event.target.classList.add('active');
   if (page === 'dashboard') loadDashboard();
   if (page === 'clients')   loadClients();
-  if (page === 'demandes')  loadDemandes();
   if (page === 'balances')  loadBalances();
   if (page === 'contracts') loadContracts();
   if (page === 'invoices')  loadInvoices();
@@ -4054,171 +4008,6 @@ async function saveNetwork() {
   toast('Réseau créé', 'success');
   closeModal('modal-network');
   loadNetworks();
-}
-
-// ═══════════════════════════════════════════════════════════
-//  DEMANDES (candidatures locataires)
-// ═══════════════════════════════════════════════════════════
-// Liste les candidatures issues de la page publique /postuler/
-// (table public.candidatures, alimentee par l'Edge Function
-// submit-candidature). Permet a l'admin Modulimo d'approuver ou
-// de refuser une demande directement depuis l'onglet Demandes.
-// Par defaut, le filtre statut affiche "ouvertes" = recu +
-// en_evaluation, ce qui correspond aux dossiers a traiter pour
-// Pointe Est et tout autre immeuble du reseau.
-let demandesCache = [];
-let demandesBuildings = [];
-
-async function loadDemandes() {
-  const tbody = document.getElementById('demandes-tbody');
-  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text3)">Chargement…</td></tr>';
-
-  const [candRes, buildRes] = await Promise.all([
-    sb.from('candidatures')
-      .select('id,created_at,building_id,status,form_data,applicant_email,applicant_name,target_rent,annual_income,score_total,score_category,reviewed_at,decision_at,destroyed_at')
-      .is('destroyed_at', null)
-      .order('created_at', { ascending: false }),
-    sb.from('building_registry').select('id,name,status')
-  ]);
-
-  if (candRes.error) { toast('Erreur chargement demandes: ' + candRes.error.message, 'error'); tbody.innerHTML = ''; return; }
-  demandesCache = candRes.data || [];
-  demandesBuildings = buildRes.data || [];
-
-  // Filtre immeubles : on liste tous les immeubles connus, plus
-  // ceux qui ont au moins une candidature (defensif si une candidature
-  // est rattachee a un building_id absent du registry).
-  const sel = document.getElementById('demandes-building-filter');
-  const current = sel.value;
-  const known = new Map(demandesBuildings.map(b => [b.id, b.name]));
-  demandesCache.forEach(c => { if (c.building_id && !known.has(c.building_id)) known.set(c.building_id, c.building_id.slice(0,8) + '…'); });
-  const opts = ['<option value="">Tous les immeubles</option>'];
-  // Pointe Est est notre 1er projet : on le met en tete s'il existe.
-  const sorted = [...known.entries()].sort((a, b) => {
-    const ap = /pointe/i.test(a[1]) ? 0 : 1;
-    const bp = /pointe/i.test(b[1]) ? 0 : 1;
-    if (ap !== bp) return ap - bp;
-    return a[1].localeCompare(b[1]);
-  });
-  sorted.forEach(([id, name]) => opts.push(`<option value="${id}">${escapeHtml(name)}</option>`));
-  sel.innerHTML = opts.join('');
-  sel.value = current || sorted.find(([, n]) => /pointe/i.test(n))?.[0] || '';
-
-  renderDemandes();
-}
-
-function renderDemandes() {
-  const tbody = document.getElementById('demandes-tbody');
-  const sumEl = document.getElementById('demandes-summary');
-  const buildingFilter = document.getElementById('demandes-building-filter').value;
-  const statusFilter = document.getElementById('demandes-status-filter').value;
-
-  const rows = demandesCache.filter(c => {
-    if (buildingFilter && c.building_id !== buildingFilter) return false;
-    if (statusFilter === 'ouvertes') return c.status === 'recu' || c.status === 'en_evaluation';
-    if (statusFilter && c.status !== statusFilter) return false;
-    return true;
-  });
-
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:24px;">Aucune demande</td></tr>';
-    sumEl.textContent = '0 demande';
-    return;
-  }
-
-  const buildingName = id => demandesBuildings.find(b => b.id === id)?.name || (id ? '—' : 'Non précisé');
-  tbody.innerHTML = rows.map(c => {
-    const fd = c.form_data || {};
-    const phone = fd.phone ? `<br><span style="font-size:11px;color:var(--text3);">${escapeHtml(fd.phone)}</span>` : '';
-    const score = c.score_total != null
-      ? `<span class="badge ${_scoreBadgeClass(c.score_category)}">${c.score_total}/100${c.score_category ? ' · ' + _scoreLabel(c.score_category) : ''}</span>`
-      : '<span style="color:var(--text3)">—</span>';
-    const isOpen = c.status === 'recu' || c.status === 'en_evaluation';
-    const actions = isOpen
-      ? `<button class="btn btn-success btn-sm" onclick="approveDemande('${c.id}')">✓ Approuver</button>
-         <button class="btn btn-danger btn-sm" onclick="rejectDemande('${c.id}')">✕ Refuser</button>`
-      : `<span style="font-size:11px;color:var(--text3);">${c.decision_at ? 'Décidée le ' + new Date(c.decision_at).toLocaleDateString('fr-CA') : '—'}</span>`;
-    return `<tr>
-      <td><strong>${escapeHtml((c.applicant_name || '').trim() || '—')}</strong>${phone}</td>
-      <td style="font-size:12px;">${escapeHtml(c.applicant_email || '—')}</td>
-      <td>${escapeHtml(buildingName(c.building_id))}</td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums;">${c.target_rent != null ? Number(c.target_rent).toFixed(0) + ' $' : '—'}</td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums;">${c.annual_income ? Number(c.annual_income).toLocaleString('fr-CA') + ' $' : '—'}</td>
-      <td>${score}</td>
-      <td>${_demandeStatusBadge(c.status)}</td>
-      <td style="font-size:12px;">${new Date(c.created_at).toLocaleDateString('fr-CA')}</td>
-      <td><div class="td-actions">${actions}</div></td>
-    </tr>`;
-  }).join('');
-
-  const open = rows.filter(c => c.status === 'recu' || c.status === 'en_evaluation').length;
-  sumEl.textContent = `${rows.length} demande${rows.length > 1 ? 's' : ''} affichée${rows.length > 1 ? 's' : ''} · ${open} à traiter`;
-}
-
-function _scoreBadgeClass(cat) {
-  if (cat === 'excellent' || cat === 'bon') return 'badge-green';
-  if (cat === 'a_evaluer') return 'badge-yellow';
-  if (cat === 'a_risque') return 'badge-red';
-  return 'badge-gray';
-}
-function _scoreLabel(cat) {
-  return { excellent: 'Excellent', bon: 'Bon', a_evaluer: 'À évaluer', a_risque: 'À risque' }[cat] || cat;
-}
-function _demandeStatusBadge(status) {
-  const map = {
-    recu:          ['badge-yellow', 'Reçue'],
-    en_evaluation: ['badge-yellow', 'En évaluation'],
-    accepte:       ['badge-green',  'Acceptée'],
-    refuse:        ['badge-red',    'Refusée'],
-    retire:        ['badge-gray',   'Retirée'],
-    expire:        ['badge-gray',   'Expirée']
-  };
-  const [cls, lbl] = map[status] || ['badge-gray', status || '—'];
-  return `<span class="badge ${cls}">${lbl}</span>`;
-}
-
-async function approveDemande(id) {
-  const c = demandesCache.find(x => x.id === id);
-  if (!c) { toast('Demande introuvable', 'error'); return; }
-  const who = (c.applicant_name || '').trim() || c.applicant_email || 'ce candidat';
-  if (!confirm('Approuver la demande de ' + who + ' ?')) return;
-  const now = new Date().toISOString();
-  const { error } = await sb.from('candidatures').update({
-    status: 'accepte',
-    reviewed_by: currentAdmin?.id || null,
-    reviewed_at: now,
-    decision_at: now
-  }).eq('id', id);
-  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
-  toast('Demande approuvée ✓', 'success');
-  loadDemandes();
-}
-
-async function rejectDemande(id) {
-  const c = demandesCache.find(x => x.id === id);
-  if (!c) { toast('Demande introuvable', 'error'); return; }
-  const who = (c.applicant_name || '').trim() || c.applicant_email || 'ce candidat';
-  if (!confirm('Refuser la demande de ' + who + ' ?')) return;
-  const now = new Date().toISOString();
-  // retention_until = 12 mois apres refus (Loi 25)
-  const retention = new Date();
-  retention.setMonth(retention.getMonth() + 12);
-  const { error } = await sb.from('candidatures').update({
-    status: 'refuse',
-    reviewed_by: currentAdmin?.id || null,
-    reviewed_at: now,
-    decision_at: now,
-    retention_until: retention.toISOString()
-  }).eq('id', id);
-  if (error) { toast('Erreur: ' + error.message, 'error'); return; }
-  toast('Demande refusée', 'success');
-  loadDemandes();
-}
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, ch => ({
-    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
-  }[ch]));
 }
 
 // HELPERS
