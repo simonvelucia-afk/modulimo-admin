@@ -3,238 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Modulimo Admin — Statistiques candidatures</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0"></script>
+<title>Modulimo Admin -- Candidatures</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
-    --primary:#1f4e79; --primary-dark:#163a5a; --primary-soft:#e8f0f8;
-    --bg:#f5f4ef; --surface:#fff; --border:#e3e1da;
-    --text:#1a1a1a; --muted:#6b6b6b;
-    --excellent:#2f7a4d; --bon:#1f4e79; --evaluer:#b8860b; --risque:#a94442;
+    --primary: #1f4e79; --primary-dark: #163a5a; --primary-soft: #e8f0f8;
+    --accent: #c8a951; --bg: #f5f4ef; --surface: #ffffff; --border: #e3e1da;
+    --text: #1a1a1a; --text-muted: #6b6b6b;
+    --excellent: #2f7a4d; --bon: #1f4e79; --evaluer: #b8860b; --risque: #a94442;
+    --eco: #2f7a4d; --sec: #5a4a8a; --inn: #c2722e; --radius: 4px;
   }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--text); line-height:1.5; font-size:14px; }
-  .topbar { background:linear-gradient(135deg, var(--primary), var(--primary-dark)); color:#fff; padding:18px 32px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; }
-  .topbar h1 { font-size:20px; font-weight:600; }
-  .topbar .brand { font-size:11px; letter-spacing:.3em; opacity:.85; text-transform:uppercase; margin-bottom:2px; }
-  .topbar a.back { color:rgba(255,255,255,.85); font-size:12px; text-decoration:none; margin-right:14px; }
-  .topbar a.back:hover { color:#fff; text-decoration:underline; }
-  .auth { display:flex; gap:10px; align-items:center; font-size:13px; }
-  .auth input { padding:8px 12px; border:1px solid rgba(255,255,255,.3); background:rgba(255,255,255,.1); color:#fff; border-radius:4px; font-size:13px; }
-  .auth input::placeholder { color:rgba(255,255,255,.6); }
-  .auth button { padding:8px 16px; background:#fff; color:var(--primary); border:none; border-radius:4px; cursor:pointer; font-weight:500; font-size:13px; }
-
-  .container { max-width:1140px; margin:0 auto; padding:32px 24px; }
-  .empty { text-align:center; color:var(--muted); padding:80px 24px; }
-  .empty h2 { font-size:18px; margin-bottom:8px; color:var(--text); font-weight:600; }
-
-  .kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:32px; }
-  .kpi { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:18px 20px; }
-  .kpi .label { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:6px; font-weight:500; }
-  .kpi .value { font-size:28px; font-weight:700; color:var(--primary); line-height:1; }
-  .kpi .value small { font-size:14px; color:var(--muted); font-weight:400; }
-  .kpi.excellent .value { color:var(--excellent); }
-  .kpi.risque .value { color:var(--risque); }
-
-  .section { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:20px 24px; margin-bottom:24px; }
-  .section h2 { font-size:15px; font-weight:600; color:var(--text); margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid var(--border); }
-
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th { text-align:left; padding:10px 8px; border-bottom:2px solid var(--border); font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); font-weight:600; }
-  td { padding:10px 8px; border-bottom:1px solid #f0eee7; }
-  tr:last-child td { border-bottom:none; }
-  td.num { text-align:right; font-variant-numeric:tabular-nums; }
-  .cat-pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
-  .cat-pill.excellent { background:#e6f4ec; color:var(--excellent); }
-  .cat-pill.bon { background:var(--primary-soft); color:var(--bon); }
-  .cat-pill.a_evaluer { background:#fcf3e0; color:var(--evaluer); }
-  .cat-pill.a_risque { background:#fbeae9; color:var(--risque); }
-
-  .info-note { background:#fcf9ed; border-left:3px solid #c8a951; padding:12px 16px; border-radius:4px; font-size:13px; color:#5a4a1f; margin-bottom:24px; }
-  .info-note strong { color:#3a2f10; }
-
-  .loading { text-align:center; padding:40px; color:var(--muted); }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; font-size: 14px; }
+  .empty { text-align:center; padding:80px 24px; color:var(--text-muted); max-width:640px; margin:0 auto; }
+  .empty h1 { font-family: 'Fraunces', serif; font-size: 28px; color: var(--text); margin-bottom: 16px; }
+  .empty p { line-height: 1.7; margin-bottom: 12px; }
+  .empty a { color: var(--primary); }
 </style>
 </head>
 <body>
-
-<div class="topbar">
-  <div>
-    <div class="brand">Modulimo · Admin</div>
-    <h1>Statistiques candidatures</h1>
+  <div class="empty">
+    <h1>Candidatures — panneau retiré temporairement</h1>
+    <p>La gestion des candidatures sera intégrée directement comme onglet dans <strong>CoHabitat</strong> de chaque immeuble (le gestionnaire les traitera dans son outil habituel).</p>
+    <p>En attendant, les candidatures continuent d’être enregistrées dans la table <code>public.candidatures</code> via la page publique <a href="https://www.modulimo.com/postuler/">modulimo.com/postuler/</a>. Tu peux les consulter directement via le SQL Editor Supabase.</p>
+    <p><a href="./index.html">← Retour à l’admin principal</a></p>
   </div>
-  <div class="auth" id="authSection"></div>
-</div>
-
-<div class="container" id="container">
-  <div class="empty" id="emptyState">
-    <h2>Connectez-vous pour voir les statistiques</h2>
-    <p>Utilisez vos identifiants Modulimo Admin.</p>
-  </div>
-</div>
-
-<script>
-  // Memes valeurs que js/theme.js du site public -- cle anon publique
-  const SUPABASE_URL = 'https://bpxscgrbxjscicpnheep.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJweHNjZ3JieGpzY2ljcG5oZWVwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzOTYxNzIsImV4cCI6MjA5MDk3MjE3Mn0._M6HHhCwKuuqAzicDZzJp7ul0M3KpDBBDb6ImDWWcLo';
-
-  if (!window.supabase || !window.supabase.createClient) {
-    document.getElementById('emptyState').innerHTML =
-      '<h2 style="color:#a94442">Erreur : bibliotheque Supabase non chargee</h2>' +
-      '<p>Verifiez votre connexion ou un bloqueur de pub qui pourrait bloquer cdn.jsdelivr.net.</p>';
-    throw new Error('Supabase SDK not loaded');
-  }
-
-  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  let currentUser = null;
-
-  function renderAuth() {
-    const sec = document.getElementById('authSection');
-    sec.innerHTML = '';
-    const back = document.createElement('a');
-    back.className = 'back';
-    back.href = './index.html';
-    back.textContent = '← Admin principal';
-    sec.appendChild(back);
-
-    if (currentUser) {
-      const email = document.createElement('span');
-      email.style.opacity = '.85';
-      email.textContent = currentUser.email;
-      const out = document.createElement('button');
-      out.textContent = 'Déconnexion';
-      out.addEventListener('click', signOut);
-      sec.append(email, out);
-    } else {
-      const emailIn = document.createElement('input');
-      emailIn.type = 'email'; emailIn.id = 'adminEmail'; emailIn.placeholder = 'courriel admin';
-      const passIn = document.createElement('input');
-      passIn.type = 'password'; passIn.id = 'adminPass'; passIn.placeholder = 'mot de passe';
-      const btn = document.createElement('button');
-      btn.textContent = 'Se connecter';
-      btn.addEventListener('click', signIn);
-      passIn.addEventListener('keypress', (e) => { if (e.key === 'Enter') signIn(); });
-      sec.append(emailIn, passIn, btn);
-    }
-  }
-
-  async function signIn() {
-    const email = document.getElementById('adminEmail').value;
-    const password = document.getElementById('adminPass').value;
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) { alert('Erreur : ' + error.message); return; }
-    currentUser = data.user;
-    renderAuth();
-    loadStats();
-  }
-
-  async function signOut() {
-    await sb.auth.signOut();
-    currentUser = null;
-    renderAuth();
-    document.getElementById('container').innerHTML =
-      '<div class="empty" id="emptyState"><h2>Connectez-vous pour voir les statistiques</h2><p>Utilisez vos identifiants Modulimo Admin.</p></div>';
-  }
-
-  async function loadStats() {
-    const c = document.getElementById('container');
-    c.innerHTML = '<div class="loading">Chargement…</div>';
-
-    const [{ data: candidatures, error: cErr }, { data: analytics, error: aErr }, { data: buildings }] = await Promise.all([
-      sb.from('candidatures').select('id, created_at, status, score_total, score_category, building_id').is('destroyed_at', null),
-      sb.from('candidatures_analytics').select('*').order('month', { ascending: false }),
-      sb.from('building_registry').select('id, name, notification_email'),
-    ]);
-
-    if (cErr) { c.innerHTML = '<div class="empty"><h2>Erreur d’accès</h2><p>' + cErr.message + '</p></div>'; return; }
-
-    const buildingsById = {};
-    (buildings || []).forEach(b => buildingsById[b.id] = b);
-
-    const total = candidatures.length;
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const thisMonth = candidatures.filter(x => new Date(x.created_at) >= monthStart).length;
-    const scores = candidatures.map(x => x.score_total).filter(s => s != null);
-    const avgScore = scores.length ? Math.round(scores.reduce((a,b) => a+b, 0) / scores.length) : 0;
-    const counts = { excellent:0, bon:0, a_evaluer:0, a_risque:0 };
-    candidatures.forEach(x => { if (x.score_category && counts[x.score_category] !== undefined) counts[x.score_category]++; });
-    const statusCounts = {};
-    candidatures.forEach(x => { statusCounts[x.status] = (statusCounts[x.status] || 0) + 1; });
-
-    const noteHtml = total === 0
-      ? '<div class="info-note"><strong>Aucune candidature pour l’instant.</strong> Les soumissions arriveront ici. Le gestionnaire de chaque immeuble (configuré dans <code>building_registry.notification_email</code>) reçoit chaque candidature par courriel.</div>'
-      : '<div class="info-note"><strong>Notifications par courriel actives.</strong> Chaque nouvelle candidature est envoyée au gestionnaire de l’immeuble (champ <code>notification_email</code> de <code>building_registry</code>). Modulimo central garde les données 12 mois pour audit Loi 25, puis purge automatique.</div>';
-
-    const kpisHtml = `
-      <div class="kpis">
-        <div class="kpi"><div class="label">Total reçues</div><div class="value">${total}</div></div>
-        <div class="kpi"><div class="label">Ce mois-ci</div><div class="value">${thisMonth}</div></div>
-        <div class="kpi"><div class="label">Score moyen</div><div class="value">${avgScore}<small>/100</small></div></div>
-        <div class="kpi excellent"><div class="label">Excellent (≥80)</div><div class="value">${counts.excellent}</div></div>
-        <div class="kpi"><div class="label">Bon (65–79)</div><div class="value">${counts.bon}</div></div>
-        <div class="kpi risque"><div class="label">À risque (<50)</div><div class="value">${counts.a_risque}</div></div>
-      </div>`;
-
-    const statusOrder = ['recu','en_evaluation','accepte','refuse','retire','expire'];
-    const statusLabels = { recu:'Reçues', en_evaluation:'En évaluation', accepte:'Acceptées', refuse:'Refusées', retire:'Retirées', expire:'Expirées' };
-    const statusHtml = `
-      <div class="section">
-        <h2>Répartition par statut</h2>
-        <table>
-          <thead><tr><th>Statut</th><th class="num">Nombre</th></tr></thead>
-          <tbody>
-            ${statusOrder.map(s => `<tr><td>${statusLabels[s] || s}</td><td class="num">${statusCounts[s] || 0}</td></tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
-
-    const monthsHtml = !analytics || analytics.length === 0
-      ? '<div class="section"><h2>Par mois et immeuble</h2><div class="empty" style="padding:32px">Aucune donnée agrégée pour l’instant.</div></div>'
-      : `
-      <div class="section">
-        <h2>Par mois et immeuble</h2>
-        <table>
-          <thead><tr><th>Mois</th><th>Immeuble</th><th>Statut</th><th>Catégorie</th><th class="num">Total</th><th class="num">Score moyen</th><th class="num">Loyer moyen visé</th></tr></thead>
-          <tbody>
-            ${analytics.map(row => `
-              <tr>
-                <td>${row.month ? new Date(row.month).toLocaleDateString('fr-CA', { year:'numeric', month:'short' }) : '—'}</td>
-                <td>${(buildingsById[row.building_id] && buildingsById[row.building_id].name) || (row.building_id ? row.building_id.slice(0,8) + '…' : '—')}</td>
-                <td>${statusLabels[row.status] || row.status || '—'}</td>
-                <td>${row.score_category ? '<span class="cat-pill ' + row.score_category + '">' + row.score_category.replace('_',' ') + '</span>' : '—'}</td>
-                <td class="num">${row.total || 0}</td>
-                <td class="num">${row.avg_score != null ? row.avg_score : '—'}</td>
-                <td class="num">${row.avg_target_rent != null ? row.avg_target_rent + ' $' : '—'}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>`;
-
-    const buildingsHtml = `
-      <div class="section">
-        <h2>Configuration des notifications par immeuble</h2>
-        <table>
-          <thead><tr><th>Immeuble</th><th>Courriel de notification</th></tr></thead>
-          <tbody>
-            ${(buildings || []).map(b => `<tr><td>${b.name}</td><td>${b.notification_email || '<span style="color:#a94442">non configuré</span>'}</td></tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
-
-    c.innerHTML = noteHtml + kpisHtml + statusHtml + monthsHtml + buildingsHtml;
-  }
-
-  // Init
-  renderAuth();
-  sb.auth.getSession().then(({ data: { session } }) => {
-    if (session) {
-      currentUser = session.user;
-      renderAuth();
-      loadStats();
-    }
-  });
-</script>
 </body>
 </html>
