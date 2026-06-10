@@ -34,3 +34,12 @@ verify_jwt = false
 # key (deja publiques) sont utilisees par le frontend.
 [functions.submit-candidature]
 verify_jwt = false
+
+# submit-lead-pointe-est : formulaire de capture de leads public sur
+# modulimo.com (accueil, /projets, /projets/pointe-est). Meme modele
+# que submit-candidature : validation + honeypot cote fonction,
+# insertion via service_role dans leads_pointe_est (migration 025),
+# notification courriel via Resend (secrets RESEND_KEY / RESEND_FROM,
+# destinataire optionnel LEADS_NOTIFY_TO).
+[functions.submit-lead-pointe-est]
+verify_jwt = false
