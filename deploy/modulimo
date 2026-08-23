@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# modulimo — pilote de l'appliance Modulimo Central.
+#
+#   ./modulimo init                  secrets, config, verifications
+#   ./modulimo up | down | logs      cycle de vie de la pile
+#   ./modulimo migrate               rejoue les migrations en attente
+#   ./modulimo admin <courriel>      cree un compte administrateur
+#   ./modulimo backup [dossier]      sauvegarde base + secrets
+#   ./modulimo restore <fichier>     restauration d'une sauvegarde
+#   ./modulimo doctor                etat des services et des fonctions
+#   ./modulimo purge                 purge Loi 25 immediate
+#
+#   ./modulimo building list         immeubles enregistres
+#   ./modulimo building add <id> <nom> <url> <jwks_url>
+#
+# Un immeuble enregistre peut appeler finance-bridge : c'est ce registre
+# qui autorise, et lui seul.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; OFF=$'\033[0m'
+die()  { echo "${RED}✗${OFF} $*" >&2; exit 1; }
+ok()   { echo "${GREEN}✓${OFF} $*"; }
+warn() { echo "${YELLOW}!${OFF} $*"; }
+
+compose() { docker compose --env-file .env --env-file .env.secrets "$@"; }
+
+load_env() {
+  [ -f .env ] || die "fichier .env absent — copier .env.example et le remplir"
+  [ -f .env.secrets ] || die "secrets absents — lancer ./modulimo init"
+  set -a; . ./.env; . ./.env.secrets; set +a
+}
+
+api() {
+  local method="$1" path="$2" body="${3:-}"
+  local args=(-sS -X "$method" -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY")
+  [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -H 'Prefer: return=representation' -d "$body")
+  compose exec -T web curl "${args[@]}" "http://rest:3000${path}"
+}
+
+cmd_init() {
+  [ -f .env ] || die "fichier .env absent — copier .env.example et le remplir d'abord"
+  if [ -f .env.secrets ]; then
+    warn "secrets deja presents — conserves (les regenerer invaliderait toutes les sessions)"
+  else
+    node scripts/gen-keys.mjs > .env.secrets
+    chmod 600 .env.secrets
+    ok "secrets generes dans .env.secrets"
+  fi
+  mkdir -p generated
+  node scripts/render-config.mjs > generated/config.js
+  ok "configuration de l'interface generee"
+
+  set -a; . ./.env; . ./.env.secrets; set +a
+  if [ "${OFFLINE_ASSETS:-true}" != "false" ] && [ ! -f ../vendor/supabase.js ]; then
+    warn "vendor/ vide : lancer scripts/fetch-vendor.sh sur une machine connectee"
+  fi
+  ok "pret — ./modulimo up"
+}
+
+cmd_up() {
+  load_env
+  [ -f generated/config.js ] || node scripts/render-config.mjs > generated/config.js
+  compose up -d --build
+  ok "pile demarree — ${SITE_URL}"
+}
+
+cmd_down()    { load_env; compose down; }
+cmd_logs()    { load_env; compose logs -f --tail=100 "${@:-}"; }
+cmd_migrate() { load_env; compose run --rm db-bootstrap && compose run --rm db-migrate; }
+cmd_purge()   { load_env; compose run --rm --entrypoint /bin/sh maintenance /db/migrate.sh purge; }
+
+# Les inscriptions sont fermees sur la centrale : on cree les comptes
+# administrateurs par l'API d'administration de GoTrue.
+cmd_admin() {
+  load_env
+  local email="${1:?usage: ./modulimo admin <courriel>}"
+  local pass="${2:-}"
+  if [ -z "$pass" ]; then
+    pass="$(node -e 'process.stdout.write(require("crypto").randomBytes(12).toString("base64url"))')"
+  fi
+  compose exec -T web curl -sS -X POST \
+    -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$email\",\"password\":\"$pass\",\"email_confirm\":true}" \
+    "http://auth:9999/admin/users" >/dev/null
+  ok "compte cree : $email"
+  echo "  mot de passe : $pass"
+  echo "  (a changer a la premiere connexion)"
+}
+
+cmd_backup() {
+  load_env
+  local dir="${1:-./backups}"
+  mkdir -p "$dir"
+  local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
+  local out="$dir/modulimo-$stamp.sql.gz"
+  compose exec -T db pg_dump -U postgres -d "${POSTGRES_DB:-modulimo}" | gzip > "$out"
+  tar czf "$dir/modulimo-secrets-$stamp.tar.gz" .env .env.secrets
+  chmod 600 "$dir/modulimo-secrets-$stamp.tar.gz"
+  ok "sauvegarde : $out"
+  ok "secrets    : $dir/modulimo-secrets-$stamp.tar.gz  (a conserver ailleurs)"
+}
+
+cmd_restore() {
+  load_env
+  local file="${1:?usage: ./modulimo restore <fichier.sql.gz>}"
+  [ -f "$file" ] || die "fichier introuvable : $file"
+  read -r -p "Ecraser la base ${POSTGRES_DB:-modulimo} avec $file ? [oui/non] " a
+  [ "$a" = "oui" ] || die "abandon"
+  gunzip -c "$file" | compose exec -T db psql -U postgres -d "${POSTGRES_DB:-modulimo}"
+  ok "restauration terminee"
+}
+
+cmd_doctor() {
+  load_env
+  echo "── Services ─────────────────────────────────────────"
+  compose ps --format 'table {{.Service}}\t{{.Status}}' || true
+  echo
+  echo "── Fonctions ────────────────────────────────────────"
+  for fn in finance-bridge loi25-process; do
+    printf "  %-22s " "$fn"
+    compose exec -T web curl -sS --max-time 5 "http://fn-$fn:8000/$fn/health" || echo "injoignable"
+    echo
+  done
+  echo "── Immeubles ────────────────────────────────────────"
+  cmd_building list
+}
+
+cmd_building() {
+  load_env
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list)
+      api GET "/building_registry?select=id,name,status,supabase_url&order=name" \
+        | node -e '
+          let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+            const rows=JSON.parse(s||"[]");
+            if(!rows.length) return console.log("  (aucun immeuble)");
+            for(const r of rows) console.log(`  ${String(r.status).padEnd(10)} ${String(r.name).padEnd(24)} ${r.supabase_url||""}`);
+          });'
+      ;;
+    add)
+      local id="${1:?usage: ./modulimo building add <id> <nom> <url> <jwks_url>}"
+      local name="${2:?nom requis}" url="${3:?url requise}" jwks="${4:?jwks_url requise}"
+      api POST "/building_registry" \
+        "{\"id\":\"$id\",\"name\":\"$name\",\"supabase_url\":\"$url\",\"jwt_issuer\":\"$url/auth/v1\",\"jwks_url\":\"$jwks\",\"status\":\"active\"}" >/dev/null
+      ok "immeuble $name enregistre"
+      ;;
+    *) die "sous-commande inconnue : $sub" ;;
+  esac
+}
+
+case "${1:-}" in
+  init)     shift; cmd_init "$@" ;;
+  up)       shift; cmd_up "$@" ;;
+  down)     shift; cmd_down "$@" ;;
+  logs)     shift; cmd_logs "$@" ;;
+  migrate)  shift; cmd_migrate "$@" ;;
+  admin)    shift; cmd_admin "$@" ;;
+  backup)   shift; cmd_backup "$@" ;;
+  restore)  shift; cmd_restore "$@" ;;
+  doctor)   shift; cmd_doctor "$@" ;;
+  purge)    shift; cmd_purge "$@" ;;
+  building) shift; cmd_building "$@" ;;
+  *)
+    awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+    exit 1
+    ;;
+esac

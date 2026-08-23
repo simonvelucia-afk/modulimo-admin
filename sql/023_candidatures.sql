@@ -227,11 +227,24 @@ COMMIT;
 -- pg_cron 1.6.4 est installe (verifie via SELECT * FROM pg_extension).
 -- Le schedule est cree hors du BEGIN/COMMIT car cron.schedule fait son
 -- propre commit interne.
-SELECT cron.schedule(
-  'purge-candidatures-loi25',
-  '0 3 * * *',
-  $$SELECT public.purge_expired_candidatures()$$
-);
+-- pg_cron n'existe pas partout : sur une appliance en reseau ferme, la
+-- base tourne sur une image Postgres standard et la purge est declenchee
+-- par le service `maintenance` du docker-compose. On planifie donc
+-- seulement si l'extension est presente, au lieu d'arreter la migration.
+DO $cron$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+    PERFORM cron.schedule(
+      'purge-candidatures-loi25',
+      '0 3 * * *',
+      $job$SELECT public.purge_expired_candidatures()$job$
+    );
+    RAISE NOTICE 'purge candidatures planifiee via pg_cron (03:00)';
+  ELSE
+    RAISE NOTICE 'pg_cron absent : planifier purge_expired_candidatures() en externe';
+  END IF;
+END
+$cron$;
 
 NOTIFY pgrst, 'reload schema';
 
