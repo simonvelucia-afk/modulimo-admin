@@ -63,27 +63,76 @@ Si CoHabitat tourne sur la même machine, garder les ports par défaut
 
 ## Immeubles autorisés
 
-`finance-bridge` n'accepte que les immeubles inscrits au registre :
+`finance-bridge` n'accepte que les immeubles inscrits au registre, et
+seulement eux. Deux façons pour un immeuble de prouver l'identité de ses
+résidents, selon la façon dont il est déployé :
+
+| Mode | Pour qui | Ce que la centrale détient |
+|---|---|---|
+| `jwks` | immeuble hébergé sur Supabase | rien — elle interroge les JWKS du projet |
+| `ed25519` | instance auto-hébergée, jointe par VPN | la **clé publique** de l'instance |
+
+**Immeuble hébergé** — inchangé :
 
 ```bash
-./modulimo building list
-./modulimo building add <uuid> "Pointe-Est" https://cohabitat.pointe-est.lan \
-    https://cohabitat.pointe-est.lan/auth/v1/.well-known/jwks.json
+./modulimo building add <uuid> "Pointe-Est" https://xxx.supabase.co \
+    https://xxx.supabase.co/auth/v1/.well-known/jwks.json
 ```
 
-**Limite importante pour les instances autonomes.** `finance-bridge`
-vérifie les jetons des résidents via les **JWKS** de leur instance. Une
-instance CoHabitat auto-hébergée signe ses jetons en HS256 et n'expose
-pas de JWKS : le lien financier centrale ↔ instance autonome ne
-fonctionne donc pas encore. Ce n'est pas bloquant pour un réseau fermé —
-les transactions entre immeubles autonomes passent par la fédération
-pair-à-pair de CoHabitat, qui ne demande rien à la centrale. Pour
-brancher aussi la centrale, la voie propre est de réutiliser l'identité
-Ed25519 de la fédération plutôt que les JWKS ; c'est le prochain
-chantier, il n'est pas fait.
+**Instance auto-hébergée** — le VPN doit être monté, puis :
 
-Les immeubles **hébergés** sur Supabase, eux, continuent de fonctionner
-normalement avec ce registre.
+```bash
+./modulimo building enroll https://cohabitat.pointe-est.lan "Pointe-Est"
+```
+
+La centrale lit `/federation/v1/identity` sur l'instance et enregistre sa
+clé publique Ed25519. Côté instance, il reste à mettre `CENTRAL_ENABLED=true`
+et `CENTRAL_URL` dans son `.env`, puis `./cohabitat init && ./cohabitat up`.
+
+### Pourquoi deux modes
+
+Une instance auto-hébergée signe les jetons de ses résidents en **HS256**,
+avec un secret local, et n'expose aucun JWKS : la centrale ne peut pas les
+vérifier. Lui confier ce secret serait pire — il permettrait de fabriquer
+le jeton de n'importe quel résident.
+
+L'instance vérifie donc le jeton **chez elle**, puis présente une
+assertion courte (60 s) signée avec la clé privée de sa fédération. La
+centrale n'en détient que la clé publique : elle vérifie, elle n'usurpe
+pas. L'assertion prend la forme attendue par `finance-bridge`
+(`iss` = `jwt_issuer`, `aud` = `authenticated`, `sub` = l'identifiant du
+résident), ce qui laisse sa logique de résolution inchangée.
+
+Concrètement, l'interface du résident n'appelle plus la centrale
+directement : elle passe par la passerelle de fédération de son
+immeuble, qui signe pour elle. Le secret local ne quitte jamais le
+bâtiment.
+
+### Le VPN dans une flotte mixte
+
+Une centrale sert en général les deux à la fois : des immeubles hébergés,
+joints par Internet, et des instances installées chez le client, jointes
+par VPN. Chaque instance auto-hébergée est donc un tunnel de plus à
+maintenir — et le lien porte de l'argent, pas seulement de la lecture.
+
+Ce que cela implique en pratique :
+
+- **Le tunnel est bidirectionnel.** L'instance appelle `finance-bridge`
+  pour les soldes et les débits ; la centrale appelle l'instance pour
+  `finance-sync` et pour `enroll`. Les règles de pare-feu doivent laisser
+  passer les deux sens.
+- **Une coupure n'est pas une panne.** L'instance continue de servir ses
+  résidents ; seuls les écrans qui dépendent de la centrale (solde
+  central, Machine Lunch, facturation) se dégradent, et la sonde
+  `/health` affiche la bannière hors-ligne. Les opérations financières
+  déjà engagées sont rejouées avec la même clé d'idempotence.
+- **Les adresses doivent être stables.** `jwt_issuer` est enregistré au
+  moment de l'`enroll` : changer l'URL VPN d'une instance invalide son
+  entrée au registre. Prévoir des adresses fixes dans le plan
+  d'adressage du VPN plutôt que du DHCP.
+- **Une instance compromise reste bornée.** Sa clé ne signe que pour ses
+  propres résidents, et `./modulimo building` permet de la passer en
+  `suspended` sans toucher aux autres.
 
 ## Sauvegarde
 
@@ -114,5 +163,6 @@ script qui ne l'est pas.
 | `./modulimo up` puis 502 sur l'admin | `docker compose logs rest db-migrate` |
 | Une fonction répond 503 | vérifier ses variables dans `.env` (`RESEND_KEY` pour `send-email`) |
 | `finance-bridge` renvoie `UNKNOWN_BUILDING` | l'immeuble n'est pas dans `building_registry` (`./modulimo building add`) |
-| `finance-bridge` renvoie `INVALID_SIGNATURE` | JWKS injoignable — voir la limite ci-dessus pour les instances autonomes |
+| `finance-bridge` renvoie `INVALID_SIGNATURE` | mode `jwks` : JWKS injoignable. Mode `ed25519` : clé publique périmée — refaire `./modulimo building enroll` |
+| `finance-bridge` renvoie `UNKNOWN_ISSUER` | l'URL VPN de l'instance a changé depuis son enregistrement |
 | Le `build` des fonctions échoue | il a besoin d'Internet : construire l'image sur une machine connectée, puis transporter |

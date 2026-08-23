@@ -10,11 +10,13 @@
 #   ./modulimo doctor                etat des services et des fonctions
 #   ./modulimo purge                 purge Loi 25 immediate
 #
-#   ./modulimo building list         immeubles enregistres
-#   ./modulimo building add <id> <nom> <url> <jwks_url>
+#   ./modulimo building list             immeubles enregistres
+#   ./modulimo building add <id> <nom> <url> <jwks_url>    (heberge)
+#   ./modulimo building enroll <url> [nom]                 (auto-heberge)
 #
 # Un immeuble enregistre peut appeler finance-bridge : c'est ce registre
-# qui autorise, et lui seul.
+# qui autorise, et lui seul. `enroll` va lire l'identite de l'instance
+# par le VPN et enregistre sa cle publique — aucun secret n'est echange.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -145,8 +147,41 @@ cmd_building() {
       local id="${1:?usage: ./modulimo building add <id> <nom> <url> <jwks_url>}"
       local name="${2:?nom requis}" url="${3:?url requise}" jwks="${4:?jwks_url requise}"
       api POST "/building_registry" \
-        "{\"id\":\"$id\",\"name\":\"$name\",\"supabase_url\":\"$url\",\"jwt_issuer\":\"$url/auth/v1\",\"jwks_url\":\"$jwks\",\"status\":\"active\"}" >/dev/null
-      ok "immeuble $name enregistre"
+        "{\"id\":\"$id\",\"name\":\"$name\",\"supabase_url\":\"$url\",\"jwt_issuer\":\"$url/auth/v1\",\"jwks_url\":\"$jwks\",\"status\":\"active\",\"auth_mode\":\"jwks\"}" >/dev/null
+      ok "immeuble $name enregistre (mode jwks)"
+      ;;
+
+    enroll)
+      # Instance CoHabitat auto-hebergee, joignable par le VPN. On lit sa
+      # carte de visite publique et on enregistre sa cle Ed25519 : c'est
+      # avec elle que finance-bridge verifiera ses assertions.
+      local url="${1:?usage: ./modulimo building enroll https://cohabitat.immeuble.lan [nom]}"
+      url="${url%/}"
+      echo "→ lecture de l'identite de l'instance"
+      local ident
+      ident="$(compose exec -T web curl -sS --max-time 10 "$url/federation/v1/identity")" \
+        || die "instance injoignable : $url (le VPN est-il monte ?)"
+      echo "$ident" | grep -q public_key || die "reponse inattendue : $ident"
+
+      local payload
+      payload="$(node -e '
+        const id = JSON.parse(process.argv[1]);
+        const url = process.argv[2];
+        const nom = process.argv[3] || id.display_name || id.instance_id;
+        process.stdout.write(JSON.stringify({
+          name: nom,
+          supabase_url: url,
+          jwt_issuer: url + "/auth/v1",
+          jwks_url: url + "/auth/v1/.well-known/jwks.json",
+          status: "active",
+          auth_mode: "ed25519",
+          federation_public_key: id.public_key,
+        }));' "$ident" "$url" "${2:-}")"
+
+      api POST "/building_registry" "$payload" >/dev/null
+      ok "immeuble enregistre en mode ed25519 — aucun secret echange"
+      echo "  Cote instance : mettre CENTRAL_URL=${SITE_URL} dans son .env,"
+      echo "  puis ./cohabitat init && ./cohabitat up."
       ;;
     *) die "sous-commande inconnue : $sub" ;;
   esac
