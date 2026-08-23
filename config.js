@@ -25,6 +25,11 @@
     // Adresse publique de l'interface d'administration.
     siteUrl: 'https://admin.modulimo.com',
 
+    // Ces URL sont ecrites en dur dans les balises de la page : un
+    // script tiers injecte a l'execution peut etre bloque par le
+    // navigateur sur connexion lente. Elles sont listees ici parce que
+    // le deploiement en reseau ferme les remplace par leur equivalent
+    // local a la construction (deploy/scripts/render-index.mjs).
     assets: {
       supabaseJs: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
       favicon:    'https://simonvelucia-afk.github.io/modulimo-home/images/favicon_Modulimo.png'
@@ -45,15 +50,6 @@
   }
 
   var cfg = merge(DEFAULTS, global.MODULIMO_CONFIG || {});
-
-  // document.write preserve l'ordre synchrone : supabase-js doit exister
-  // avant le script principal de la page.
-  cfg.writeHeadAssets = function () {
-    var a = cfg.assets, out = '';
-    if (a.favicon)    out += '<link rel="icon" type="image/png" href="' + a.favicon + '">';
-    if (a.supabaseJs) out += '<scr' + 'ipt src="' + a.supabaseJs + '"></scr' + 'ipt>';
-    if (out) document.write(out);
-  };
 
   global.ModulimoConfig = cfg;
 })(window);

@@ -183,6 +183,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ../:/srv:ro
       - ./generated/config.js:/srv/config.js:ro
+      - ./generated/index.html:/srv/index.html:ro
       # Kiosque Machine Lunch servi localement (optionnel) : deposer un
       # checkout de LunchMachine a cote de ce depot.
       - ../../LunchMachine:/srv/lunch:ro

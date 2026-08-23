@@ -52,7 +52,8 @@ cmd_init() {
   fi
   mkdir -p generated
   node scripts/render-config.mjs > generated/config.js
-  ok "configuration de l'interface generee"
+  node scripts/render-index.mjs  > generated/index.html
+  ok "configuration et interface generees (librairies locales)"
 
   set -a; . ./.env; . ./.env.secrets; set +a
   if [ "${OFFLINE_ASSETS:-true}" != "false" ] && [ ! -f ../vendor/supabase.js ]; then
@@ -63,7 +64,8 @@ cmd_init() {
 
 cmd_up() {
   load_env
-  [ -f generated/config.js ] || node scripts/render-config.mjs > generated/config.js
+  node scripts/render-config.mjs > generated/config.js
+  node scripts/render-index.mjs  > generated/index.html
   compose up -d --build
   ok "pile demarree — ${SITE_URL}"
 }
