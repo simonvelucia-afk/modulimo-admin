@@ -1,0 +1,66 @@
+# Point d'entree unique de la centrale.
+#
+# Meme decoupage que l'appliance CoHabitat, plus les six fonctions
+# serveur sous /functions/v1/<nom>. Le chemin complet est transmis tel
+# quel : finance-bridge lit son endpoint dans le dernier segment
+# (/functions/v1/finance-bridge/health -> "health").
+
+{
+	auto_https disable_redirects
+}
+
+# Acces interne, sans TLS : c'est par la que les fonctions serveur
+# atteignent PostgREST et GoTrue. Elles construisent des URL de la forme
+# /rest/v1/... a partir de SUPABASE_URL, d'ou ce point d'entree qui
+# reproduit le routage public sans certificat a valider.
+:8081 {
+	handle /auth/v1/* {
+		uri strip_prefix /auth/v1
+		reverse_proxy auth:9999
+	}
+	handle /rest/v1/* {
+		uri strip_prefix /rest/v1
+		reverse_proxy rest:3000
+	}
+	respond 404
+}
+
+{$SITE_HOST:localhost} {
+	encode gzip
+
+	handle /auth/v1/* {
+		uri strip_prefix /auth/v1
+		reverse_proxy auth:9999
+	}
+
+	handle /rest/v1/* {
+		uri strip_prefix /rest/v1
+		reverse_proxy rest:3000
+	}
+
+	handle /functions/v1/finance-bridge*        { reverse_proxy fn-finance-bridge:8000 }
+	handle /functions/v1/finance-sync*          { reverse_proxy fn-finance-sync:8000 }
+	handle /functions/v1/loi25-process*         { reverse_proxy fn-loi25-process:8000 }
+	handle /functions/v1/send-email*            { reverse_proxy fn-send-email:8000 }
+	handle /functions/v1/submit-candidature*    { reverse_proxy fn-submit-candidature:8000 }
+	handle /functions/v1/submit-lead-pointe-est* { reverse_proxy fn-submit-lead-pointe-est:8000 }
+
+	handle {
+		root * /srv
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}

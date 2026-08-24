@@ -4,13 +4,24 @@
 
 export type BuildingStatus = 'active' | 'suspended' | 'offboarded';
 
+// Comment l'immeuble prouve l'identite de ses residents :
+//   'jwks'    projet Supabase heberge — jeton du resident verifie via
+//             les JWKS du projet (mode historique, defaut).
+//   'ed25519' instance auto-hebergee — elle signe en HS256 avec un
+//             secret local, sans JWKS. Elle verifie donc le jeton chez
+//             elle et presente une assertion signee avec la cle privee
+//             de sa federation ; la centrale n'a que la cle publique.
+export type BuildingAuthMode = 'jwks' | 'ed25519';
+
 export interface BuildingRegistryEntry {
   id: string;               // building_registry.id (UUID)
   name: string;
-  supabase_url: string;     // https://<ref>.supabase.co
+  supabase_url: string;     // https://<ref>.supabase.co ou URL VPN
   jwt_issuer: string;       // <supabase_url>/auth/v1
   jwks_url: string;         // <supabase_url>/auth/v1/.well-known/jwks.json
   status: BuildingStatus;
+  auth_mode?: BuildingAuthMode;
+  federation_public_key?: string | null;  // SPKI base64url, mode ed25519
 }
 
 export interface ResolvedClaims {

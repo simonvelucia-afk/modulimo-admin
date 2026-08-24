@@ -1,0 +1,196 @@
+# Modulimo Central — appliance autonome.
+#
+# La centrale des operations : clients, contrats, licences, forfaits,
+# reseaux entre immeubles, facturation, machines Lunch, et les six
+# fonctions serveur (finance-bridge, envoi de courriels, Loi 25,
+# candidatures, prospects).
+#
+# Comme l'appliance CoHabitat : un seul port entre dans la machine, la
+# base et l'authentification restent sur le reseau interne de la pile.
+#
+#   cp .env.example .env && ./modulimo init && ./modulimo up
+
+name: modulimo-central
+
+x-function: &function
+  # Contexte = racine du depot : l'image embarque supabase/functions/.
+  build:
+    context: ..
+    dockerfile: deploy/functions/Dockerfile
+  restart: unless-stopped
+  depends_on:
+    db-migrate: { condition: service_completed_successfully }
+  environment: &function-env
+    # Passe par le point d'entree interne de Caddy : les fonctions
+    # construisent des chemins /rest/v1/... que PostgREST seul ne
+    # comprendrait pas.
+    SUPABASE_URL: http://web:8081
+    SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?manquant}
+    FINANCE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+    RESEND_KEY: ${RESEND_KEY:-}
+    RESEND_FROM: ${RESEND_FROM:-Modulimo <no-reply@modulimo.local>}
+    LEADS_NOTIFY_TO: ${LEADS_NOTIFY_TO:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?mot de passe Postgres manquant}
+      POSTGRES_DB: ${POSTGRES_DB:-modulimo}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-modulimo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  db-bootstrap:
+    image: postgres:16-alpine
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-modulimo}
+      AUTHENTICATOR_PASSWORD: ${AUTHENTICATOR_PASSWORD:?manquant}
+      AUTH_ADMIN_PASSWORD: ${AUTH_ADMIN_PASSWORD:?manquant}
+    volumes:
+      - ./db:/db:ro
+    entrypoint: ["/bin/sh", "/db/migrate.sh", "bootstrap"]
+    restart: "no"
+
+  auth:
+    image: supabase/gotrue:v2.158.1
+    depends_on:
+      db-bootstrap: { condition: service_completed_successfully }
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SITE_URL}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${AUTH_ADMIN_PASSWORD}@db:5432/${POSTGRES_DB:-modulimo}?search_path=auth&sslmode=disable
+      GOTRUE_SITE_URL: ${SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: ${SITE_URL},${SITE_URL}/*
+      # La centrale n'accepte pas d'inscription libre : les comptes
+      # administrateurs sont crees par un administrateur existant.
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-true}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?manquant}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@modulimo.local}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9999/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  db-migrate:
+    image: postgres:16-alpine
+    depends_on:
+      auth: { condition: service_healthy }
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-modulimo}
+    volumes:
+      - ./db:/db:ro
+      - ../sql:/app/sql:ro
+    entrypoint: ["/bin/sh", "/db/migrate.sh", "app"]
+    restart: "no"
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${AUTHENTICATOR_PASSWORD}@db:5432/${POSTGRES_DB:-modulimo}
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_OPENAPI_MODE: ignore-privileges
+
+  # ── Fonctions serveur ────────────────────────────────────────────
+  # Une par conteneur, comme sur Supabase : meme image, meme port
+  # interne, isolation par service. Deno.serve ecoute sur 8000.
+  fn-finance-bridge:
+    <<: *function
+    command: ["run", "--allow-net", "--allow-env", "--allow-read", "/app/finance-bridge/index.ts"]
+
+  fn-finance-sync:
+    <<: *function
+    command: ["run", "--allow-net", "--allow-env", "--allow-read", "/app/finance-sync/index.ts"]
+    environment:
+      <<: *function-env
+      FINANCE_SYNC_COHABITAT_KEYS: ${FINANCE_SYNC_COHABITAT_KEYS:-}
+
+  fn-loi25-process:
+    <<: *function
+    command: ["run", "--allow-net", "--allow-env", "--allow-read", "/app/loi25-process/index.ts"]
+
+  fn-send-email:
+    <<: *function
+    command: ["run", "--allow-net", "--allow-env", "--allow-read", "/app/send-email/index.ts"]
+
+  fn-submit-candidature:
+    <<: *function
+    command: ["run", "--allow-net", "--allow-env", "--allow-read", "/app/submit-candidature/index.ts"]
+
+  fn-submit-lead-pointe-est:
+    <<: *function
+    command: ["run", "--allow-net", "--allow-env", "--allow-read", "/app/submit-lead-pointe-est/index.ts"]
+
+  # Sans pg_cron, la purge Loi 25 des candidatures expirees est
+  # declenchee ici, une fois par jour.
+  maintenance:
+    image: postgres:16-alpine
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-modulimo}
+    volumes:
+      - ./db:/db:ro
+    entrypoint: ["/bin/sh", "-c", "while true; do sleep 86400; /bin/sh /db/migrate.sh purge; done"]
+
+  web:
+    image: caddy:2-alpine
+    depends_on: [rest, fn-finance-bridge]
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    environment:
+      SITE_HOST: ${SITE_HOST:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../:/srv:ro
+      - ./generated/config.js:/srv/config.js:ro
+      - ./generated/index.html:/srv/index.html:ro
+      # Kiosque Machine Lunch servi localement (optionnel) : deposer un
+      # checkout de LunchMachine a cote de ce depot.
+      - ../../LunchMachine:/srv/lunch:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

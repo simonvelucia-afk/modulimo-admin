@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Modulimo — Admin Central</title>
+<script src="config.js"></script>
 <link rel="icon" type="image/png" href="https://simonvelucia-afk.github.io/modulimo-home/images/favicon_Modulimo.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -774,9 +775,9 @@
 <div id="toast" class="toast"></div>
 
 <script>
-// ── CONFIG — remplacer avec les clés du projet modulimo-central ──────
-const CENTRAL_URL  = 'https://bpxscgrbxjscicpnheep.supabase.co';
-const CENTRAL_KEY  = 'sb_publishable_2V-eHOvw1v_Xwr1bpHfHLg_cbHW9ctD';
+// ── CONFIG — voir config.js (ou deploy/ pour l'appliance) ────────────
+const CENTRAL_URL  = ModulimoConfig.centralUrl;
+const CENTRAL_KEY  = ModulimoConfig.centralKey;
 // ─────────────────────────────────────────────────────────────────────
 
 const { createClient } = supabase;

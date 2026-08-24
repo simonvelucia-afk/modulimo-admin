@@ -3,7 +3,7 @@
 // directement dans la base centrale. Il n'est PAS importe par les tests
 // unitaires — les tests fabriquent leurs propres adapters in-memory.
 
-import { createRemoteJWKSet } from 'npm:jose@5';
+import { createRemoteJWKSet, importSPKI } from 'npm:jose@5';
 import type { BuildingRegistryEntry } from './types.ts';
 import type { KeyResolver } from './resolve.ts';
 
@@ -14,18 +14,55 @@ interface BuildingRow {
   jwt_issuer: string;
   jwks_url: string;
   status: string;
+  auth_mode?: string;
+  federation_public_key?: string | null;
 }
 
 const JWKS_CACHE = new Map<string, KeyResolver>();
 
+// SPKI base64url (ce que publie /federation/v1/identity cote CoHabitat)
+// vers le PEM attendu par jose. Exporte pour etre testable isolement.
+export function spkiToPem(b64url: string): string {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+  const lines = padded.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN PUBLIC KEY-----\n${lines.join('\n')}\n-----END PUBLIC KEY-----\n`;
+}
+
 export function jwksResolverFor(entry: BuildingRegistryEntry): KeyResolver {
   const cached = JWKS_CACHE.get(entry.id);
   if (cached) return cached;
-  const resolver = createRemoteJWKSet(new URL(entry.jwks_url), {
-    // jose gere un cache interne 10 min + rotation sur kid miss.
-    cooldownDuration: 30_000,
-    timeoutDuration: 2_000,
-  });
+
+  let resolver: KeyResolver;
+
+  if (entry.auth_mode === 'ed25519') {
+    // Instance auto-hebergee : pas de JWKS a interroger, donc rien a
+    // aller chercher sur le reseau au moment de la verification — ce qui
+    // convient a un lien VPN qui peut etre lent ou intermittent. La cle
+    // publique a ete echangee une fois, a l'enregistrement.
+    //
+    // On retourne une fonction plutot que la cle : jose accepte un
+    // resolveur asynchrone, ce qui permet d'importer la cle a la
+    // premiere verification sans rendre cette fonction async.
+    const pem = entry.federation_public_key ? spkiToPem(entry.federation_public_key) : null;
+    let imported: Promise<Awaited<ReturnType<typeof importSPKI>>> | null = null;
+    resolver = ((header: { alg?: string }) => {
+      if (!pem) throw new Error('MISSING_FEDERATION_KEY');
+      // Le mode ed25519 n'accepte QUE EdDSA : sans ce garde-fou, une
+      // instance pourrait presenter un jeton signe autrement et faire
+      // porter la verification a une cle qui n'est pas la sienne.
+      if (header.alg !== 'EdDSA') throw new Error('UNEXPECTED_ALG');
+      imported ??= importSPKI(pem, 'EdDSA');
+      return imported;
+    }) as unknown as KeyResolver;
+  } else {
+    resolver = createRemoteJWKSet(new URL(entry.jwks_url), {
+      // jose gere un cache interne 10 min + rotation sur kid miss.
+      cooldownDuration: 30_000,
+      timeoutDuration: 2_000,
+    });
+  }
+
   JWKS_CACHE.set(entry.id, resolver);
   return resolver;
 }
@@ -43,7 +80,10 @@ export function makeFindBuildingByIssuer(
 ): (iss: string) => Promise<BuildingRegistryEntry | null> {
   return async (iss: string) => {
     const url = new URL('/rest/v1/building_registry', centralUrl);
-    url.searchParams.set('select', 'id,name,supabase_url,jwt_issuer,jwks_url,status');
+    url.searchParams.set(
+      'select',
+      'id,name,supabase_url,jwt_issuer,jwks_url,status,auth_mode,federation_public_key',
+    );
     url.searchParams.set('jwt_issuer', `eq.${iss}`);
     url.searchParams.set('limit', '1');
     const res = await fetch(url, {
