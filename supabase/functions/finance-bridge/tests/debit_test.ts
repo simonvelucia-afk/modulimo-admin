@@ -145,3 +145,58 @@ Deno.test('debit : dependent_id passe en p_dep_external_id', async () => {
   );
   assertEquals(caller.calls[0].params.p_dep_external_id, 'dep-42');
 });
+
+// ── Mobilite partagee ────────────────────────────────────────────────
+// Le pont et la contrainte SQL doivent dire la meme chose. Ces tests
+// tiennent le cote pont ; le cote base est sql/027_finance_types_mobilite.sql.
+
+Deno.test('debit : reservation de vehicule acceptee en debit', async () => {
+  const caller = fakeCaller(() => ({
+    ok: true,
+    data: [{ transaction_id: 'tx-v1', virtual_balance: '46.30', dependent_id: null, idempotent_replay: false }],
+  }));
+  const out = await handleDebit(
+    CLAIMS,
+    { amount: -1.20, type: 'vehicle_reservation', idempotency_key: 'vehicle-resv:abc' },
+    caller, 'sr',
+  );
+  assertEquals(out.status, 200);
+  assertEquals((out.body as { virtual_balance: number }).virtual_balance, 46.3);
+  assertEquals(caller.calls[0].params.p_type, 'vehicle_reservation');
+});
+
+Deno.test('debit : reservation de vehicule avec montant positif refusee', async () => {
+  const caller = fakeCaller(() => { throw new Error('unreachable'); });
+  const out = await handleDebit(
+    CLAIMS,
+    { amount: 1.20, type: 'vehicle_reservation', idempotency_key: 'k' },
+    caller, 'sr',
+  );
+  assertEquals(out.status, 400);
+  assertEquals((out.body as { error: string }).error, 'AMOUNT_SIGN_MISMATCH');
+});
+
+Deno.test('debit : remboursement de reservation accepte en credit', async () => {
+  const caller = fakeCaller(() => ({
+    ok: true,
+    data: [{ transaction_id: 'tx-v2', virtual_balance: '47.50', dependent_id: null, idempotent_replay: false }],
+  }));
+  const out = await handleDebit(
+    CLAIMS,
+    { amount: 1.20, type: 'vehicle_reservation_refund', idempotency_key: 'vehicle-resv-refund:abc' },
+    caller, 'sr',
+  );
+  assertEquals(out.status, 200);
+  assertEquals(caller.calls[0].params.p_type, 'vehicle_reservation_refund');
+});
+
+Deno.test('debit : remboursement de reservation avec montant negatif refuse', async () => {
+  const caller = fakeCaller(() => { throw new Error('unreachable'); });
+  const out = await handleDebit(
+    CLAIMS,
+    { amount: -1.20, type: 'vehicle_reservation_refund', idempotency_key: 'k' },
+    caller, 'sr',
+  );
+  assertEquals(out.status, 400);
+  assertEquals((out.body as { error: string }).error, 'AMOUNT_SIGN_MISMATCH');
+});

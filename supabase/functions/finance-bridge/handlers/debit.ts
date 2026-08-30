@@ -12,6 +12,12 @@ const ALLOWED_DEBIT_TYPES = [
   'trip_booking',
   'trip_cancel_charge',
   'trip_driver_charge',
+  // Mobilite partagee : reservation directe d'un vehicule (minivan,
+  // velomobile) sur un creneau. Debite au temps d'utilisation, comme un
+  // espace commun l'est a la tranche de 15 min. Le pendant en base est
+  // sql/027_finance_types_mobilite.sql — les deux doivent bouger
+  // ensemble, sinon le pont accepte ce que la contrainte refuse.
+  'vehicle_reservation',
 ] as const;
 
 // Types autorises en tant que refund resident (amount doit etre > 0).
@@ -31,6 +37,10 @@ const ALLOWED_REFUND_TYPES = [
   'trip_cancel_refund',
   'trip_driver_earning',
   'lunch_cancel_refund',
+  // Annulation d'une reservation de vehicule faite plus de deux heures
+  // avant le debut du creneau. Passe ce delai, CoHabitat n'emet pas de
+  // refund du tout : le creneau reste facture, comme pour les espaces.
+  'vehicle_reservation_refund',
 ] as const;
 
 type AllowedType =
