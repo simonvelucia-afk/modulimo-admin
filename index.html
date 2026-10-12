@@ -1545,9 +1545,10 @@ async function generateInvoice(contractId) {
     // Ligne frais mensuel + lignes services
     const lines = [];
     if(monthlyFee > 0) {
-      // Tout forfait propriétaire (owner, owner_immeuble, owner_reseau) est
+      // Tout forfait propriétaire (proprietaire, owner, owner_immeuble,
+      // owner_reseau) est
       // une licence propriétaire sur la facture.
-      const label = c.plan === 'network' ? 'Forfait Réseau' : (String(c.plan || '').startsWith('owner') ? 'Licence propriétaire' : 'Forfait Local');
+      const label = c.plan === 'network' ? 'Forfait Réseau' : (String(c.plan || '').startsWith('owner') || c.plan === 'proprietaire' ? 'Licence propriétaire' : 'Forfait Local');
       lines.push({
         category: 'monthly_fee',
         description: label + ' — ' + ps + ' → ' + pe,

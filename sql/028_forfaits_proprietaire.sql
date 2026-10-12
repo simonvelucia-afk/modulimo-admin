@@ -9,16 +9,20 @@
 -- vente de CoHabitat et modulimo.com/cohabitat lisent cette table en
 -- direct : elles affichent les forfaits actifs, dans l'ordre sort_order.
 --
--- Les codes 'owner', 'local' et 'network' sont utilisés par les contrats
--- et la facturation : ils ne sont ni renommés ni supprimés.
---   owner           → reste le forfait des contrats propriétaire ;
+-- Les codes existants ne sont ni renommés ni supprimés : les contrats
+-- et la facturation s'y réfèrent. Selon l'historique de la base, le
+-- forfait propriétaire s'appelle 'proprietaire' (Central en production)
+-- ou 'owner' (schéma de 000_base_tables.sql), et les forfaits résidents
+-- 'resident_local' / 'resident_network' ou 'local' / 'network' : le
+-- script traite les deux.
+--   proprietaire    → reste le forfait des contrats propriétaire ;
 --                     devient « Petit immeuble ».
 --   owner_immeuble  → nouveau, affiché sur la page de vente. Un contrat
 --   owner_reseau      propriétaire garde plan = 'owner' : pour un
 --                     immeuble plus grand, saisir le montant convenu dans
 --                     « monthly_amount » du contrat, qui prime sur le prix
 --                     du forfait à la facturation.
---   local, network  → désactivés : retirés de la page de vente. Les
+--   résidents       → désactivés : retirés de la page de vente. Les
 --                     contrats résidents existants ne changent pas
 --                     (voir l'étape facultative en fin de fichier).
 --
@@ -38,13 +42,13 @@ UPDATE plans
        sort_order    = 1,
        featured      = FALSE,
        active        = TRUE
- WHERE code = 'owner';
+ WHERE code IN ('proprietaire', 'owner');
 
 -- « Immeuble » et « Réseau d'immeubles » : créés s'ils n'existent pas,
 -- avec les mêmes modules que le forfait propriétaire.
 INSERT INTO plans (code, name, price_monthly, max_units, sort_order, featured, active, modules)
 SELECT v.code, v.name, v.price, v.units, v.ordre, v.vedette, TRUE,
-       COALESCE((SELECT modules FROM plans WHERE code = 'owner'), '{}'::jsonb)
+       COALESCE((SELECT modules FROM plans WHERE code IN ('proprietaire', 'owner') ORDER BY code DESC LIMIT 1), '{}'::jsonb)
   FROM (VALUES
          ('owner_immeuble', 'Immeuble',            149::numeric, 100, 2, TRUE),
          ('owner_reseau',   'Réseau d''immeubles', NULL::numeric, NULL::int, 3, FALSE)
@@ -55,12 +59,13 @@ ON CONFLICT (code) DO UPDATE
        max_units     = EXCLUDED.max_units,
        sort_order    = EXCLUDED.sort_order,
        featured      = EXCLUDED.featured,
+       modules       = EXCLUDED.modules,
        active        = TRUE;
 
 -- 2. Fonctions affichées sous chaque forfait ------------------------
 
 DELETE FROM plan_features
- WHERE plan_id IN (SELECT id FROM plans WHERE code IN ('owner', 'owner_immeuble', 'owner_reseau'));
+ WHERE plan_id IN (SELECT id FROM plans WHERE code IN ('proprietaire', 'owner', 'owner_immeuble', 'owner_reseau'));
 
 INSERT INTO plan_features (plan_id, label, included, sort_order)
 SELECT p.id, f.label, TRUE, f.ordre
@@ -76,7 +81,7 @@ SELECT p.id, f.label, TRUE, f.ordre
    (8, 'Conformité Loi 25'),
    (9, 'Support par courriel')
  ) AS f(ordre, label)
- WHERE p.code IN ('owner', 'owner_immeuble', 'owner_reseau');
+ WHERE p.code IN ('proprietaire', 'owner', 'owner_immeuble', 'owner_reseau');
 
 -- Le forfait réseau ajoute ce qui le distingue.
 INSERT INTO plan_features (plan_id, label, included, sort_order)
@@ -92,7 +97,7 @@ SELECT id, f.label, TRUE, f.ordre
 -- 3. Forfaits résidents : retirés de la page de vente ---------------
 
 UPDATE plans SET active = FALSE, featured = FALSE
- WHERE code IN ('local', 'network');
+ WHERE code IN ('resident_local', 'resident_network', 'local', 'network');
 
 COMMIT;
 
@@ -107,5 +112,6 @@ SELECT code, name, price_monthly, max_units, featured, sort_order
 -- forfait quand le contrat n'a pas de montant propre. À décider avant
 -- de décommenter :
 --
--- UPDATE plans SET price_monthly = 0 WHERE code IN ('local', 'network');
+-- UPDATE plans SET price_monthly = 0
+--  WHERE code IN ('resident_local', 'resident_network', 'local', 'network');
 -- ------------------------------------------------------------
