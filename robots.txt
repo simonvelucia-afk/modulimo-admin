@@ -1,0 +1,6 @@
+# Modulimo Admin : outil interne, rien a indexer.
+# Pris en compte quand le site est servi a la racine d'un domaine
+# (admin.modulimo.com) ; sous github.io/modulimo-admin/, c'est la balise
+# <meta name="robots"> des pages qui s'applique.
+User-agent: *
+Disallow: /
