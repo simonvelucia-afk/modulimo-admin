@@ -19,8 +19,8 @@
 
 import type { ResolvedClaims, BuildingRegistryEntry } from '../lib/types.ts';
 import type { CentralCaller } from '../lib/central.ts';
+import { ADMIN_ROLES, fetchAdminRole } from '../lib/admin.ts';
 
-const ADMIN_ROLES = new Set(['admin', 'principal_admin']);
 
 type FindClient = (cohabitatUserId: string, buildingId: string) =>
   Promise<{ client_id: string } | null>;
@@ -49,31 +49,6 @@ export interface RecordRealPaymentResponse {
   real_payment_id: string;
   virtual_balance: number;
   idempotent_replay: boolean;
-}
-
-async function fetchAdminRole(
-  buildingUrl: string,
-  cohabitatUserId: string,
-  bearerJwt: string,
-): Promise<string | null> {
-  const url = new URL('/rest/v1/profiles', buildingUrl);
-  url.searchParams.set('select', 'role');
-  url.searchParams.set('id', `eq.${cohabitatUserId}`);
-  url.searchParams.set('limit', '1');
-  // PostgREST cote building exige apikey. On reutilise le JWT du caller
-  // comme apikey ET Bearer — ca evite d'avoir besoin de la clé anon
-  // building dans finance-bridge. Le JWT user satisfait le PostgREST
-  // gateway (verifie la signature) puis la RLS autorise SELECT du propre
-  // profil.
-  const res = await fetch(url, {
-    headers: {
-      apikey: bearerJwt,
-      Authorization: `Bearer ${bearerJwt}`,
-    },
-  });
-  if (!res.ok) return null;
-  const rows = (await res.json()) as Array<{ role?: string }>;
-  return rows[0]?.role ?? null;
 }
 
 export async function handleRecordRealPayment(
