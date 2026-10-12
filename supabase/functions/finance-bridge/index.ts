@@ -25,6 +25,8 @@ import { handleDebit } from './handlers/debit.ts';
 import { handleTransferToDep } from './handlers/transfer.ts';
 import { handleRecordRealPayment } from './handlers/record_real_payment.ts';
 import { handleHealth } from './handlers/health.ts';
+import { handleCandidaturesDecide, handleCandidaturesList } from './handlers/candidatures.ts';
+import { fetchAdminRole } from './lib/admin.ts';
 import { log, requestId } from './lib/logger.ts';
 
 const CORS_HEADERS: Record<string, string> = {
@@ -72,7 +74,9 @@ const caller = makePostgrestCaller(CENTRAL_URL);
 // Liste blanche des endpoints exposes. Toute route inconnue retourne 404.
 // `health` est public (pas de Bearer requis) car il sert au probing cote
 // client pour decider si l'UI doit verrouiller les actions transactionnelles.
-type EndpointName = 'get-balance' | 'lunch-purchase' | 'debit' | 'transfer-to-dep' | 'record-real-payment' | 'health';
+type EndpointName =
+  | 'get-balance' | 'lunch-purchase' | 'debit' | 'transfer-to-dep' | 'record-real-payment' | 'health'
+  | 'candidatures-list' | 'candidatures-decide';
 const ENDPOINTS: Record<EndpointName, true> = {
   'get-balance': true,
   'lunch-purchase': true,
@@ -80,6 +84,8 @@ const ENDPOINTS: Record<EndpointName, true> = {
   'transfer-to-dep': true,
   'record-real-payment': true,
   'health': true,
+  'candidatures-list': true,
+  'candidatures-decide': true,
 };
 const PUBLIC_ENDPOINTS: ReadonlySet<EndpointName> = new Set(['health']);
 const GET_ENDPOINTS:    ReadonlySet<EndpointName> = new Set(['health']);
@@ -242,6 +248,22 @@ Deno.serve(async (req) => {
         admin_user_id: resolved.claims.cohabitat_user_id,
         target_user_id: (body as { target_user_id?: string } | null)?.target_user_id,
         replay: (result.body as { idempotent_replay?: boolean }).idempotent_replay,
+      });
+      return json(result.body, result.status);
+    }
+    case 'candidatures-list':
+    case 'candidatures-decide': {
+      const cdeps = { fetchAdminRole, caller, serviceRole: SERVICE_ROLE };
+      const result = endpoint === 'candidatures-list'
+        ? await handleCandidaturesList(resolved.claims, resolved.building, token, cdeps)
+        : await handleCandidaturesDecide(resolved.claims, body as never, resolved.building, token, cdeps);
+      log(result.status >= 500 ? 'error' : result.status >= 400 ? 'warn' : 'info', 'candidatures_done', {
+        rid,
+        endpoint,
+        status: result.status,
+        building_id: resolved.claims.building_id,
+        admin_user_id: resolved.claims.cohabitat_user_id,
+        decision: (body as { decision?: string } | null)?.decision,
       });
       return json(result.body, result.status);
     }

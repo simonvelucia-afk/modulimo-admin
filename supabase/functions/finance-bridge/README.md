@@ -70,6 +70,24 @@ pré-injectées par Supabase) :
 Le nom `FINANCE_JWT_SECRET` évite la collision avec le préfixe `SUPABASE_*`
 réservé par la CLI.
 
+## Candidatures des immeubles
+
+`/candidatures-list` et `/candidatures-decide` permettent à l'admin d'un
+immeuble (CoHabitat, onglet Demandes) de lire et décider les candidatures
+de **son** immeuble. Ils remplacent l'appel direct, avec la clé anon, aux
+RPC `list_candidatures_for_building` / `decide_candidature_for_building`,
+que `sql/029` réserve désormais à `service_role`.
+
+- Jeton CoHabitat vérifié comme pour les autres endpoints.
+- Rôle `admin` ou `principal_admin` lu dans la base de l'immeuble avec le
+  jeton de l'appelant (`lib/admin.ts`, partagé avec `/record-real-payment`).
+- `building_id` toujours tiré du jeton vérifié, jamais du corps.
+- `/candidatures-decide` attend `{ candidature_id, decision }`, décision
+  parmi `accepte`, `refuse`, `en_evaluation`, et ne renvoie que `{ id, status }`.
+
+Limite : une instance auto-hébergée (`auth_mode = 'ed25519'`) ne peut pas
+encore prouver le rôle d'admin ; ces deux endpoints lui répondent 403.
+
 ## Appel côté client
 
 ```js
