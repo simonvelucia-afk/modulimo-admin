@@ -32,6 +32,20 @@
 
 BEGIN;
 
+-- 0. Harmoniser les codes avec ceux qu'écrit l'admin -----------------
+-- L'admin crée les contrats avec plan = 'owner', 'local' ou 'network'
+-- et la facture cherche le prix du forfait par ce code. Les forfaits
+-- de la base Central portaient d'autres codes (proprietaire,
+-- resident_local, resident_network) : un contrat n'y aurait jamais
+-- trouvé son prix. Aucun contrat réel n'existe encore, c'est le moment
+-- de renommer. Sans effet si les codes sont déjà les bons.
+UPDATE plans SET code = 'owner'
+ WHERE code = 'proprietaire' AND NOT EXISTS (SELECT 1 FROM plans WHERE code = 'owner');
+UPDATE plans SET code = 'local'
+ WHERE code = 'resident_local' AND NOT EXISTS (SELECT 1 FROM plans WHERE code = 'local');
+UPDATE plans SET code = 'network'
+ WHERE code = 'resident_network' AND NOT EXISTS (SELECT 1 FROM plans WHERE code = 'network');
+
 -- 1. Les trois forfaits propriétaire --------------------------------
 
 -- « Petit immeuble » : le forfait historique 'owner', mis à jour.
