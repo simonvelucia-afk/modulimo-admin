@@ -1,7 +1,8 @@
 // ============================================================
 // MODULIMO — Edge Function : submit-lead-pointe-est
 // ============================================================
-// Reçoit le formulaire « Informez-vous » du site modulimo.com :
+// Reçoit les formulaires de contact du site modulimo.com — « Informez-vous »
+// (Pointe Est) et « Demander une présentation » (/cohabitat/) :
 //   1. insère le lead dans la table public.leads_pointe_est
 //   2. envoie une notification courriel via Resend
 //
@@ -9,7 +10,7 @@
 //   RESEND_KEY        — clé API Resend (ne JAMAIS la mettre dans le repo)
 //   RESEND_FROM       — ex. 'Modulimo <no-reply@modulimo.com>' (optionnel)
 //   LEADS_NOTIFY_TO   — destinataire des notifications
-//                       (optionnel, défaut : contribution@modulimo.com)
+//                       (optionnel, défaut : info@modulimo.com)
 //
 // Déploiement (projet Central) :
 //   supabase functions deploy submit-lead-pointe-est --project-ref bpxscgrbxjscicpnheep
@@ -21,7 +22,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const RESEND_KEY = Deno.env.get("RESEND_KEY") ?? "";
 const RESEND_FROM = Deno.env.get("RESEND_FROM") ?? "Modulimo <no-reply@modulimo.com>";
-const NOTIFY_TO = Deno.env.get("LEADS_NOTIFY_TO") ?? "contribution@modulimo.com";
+const NOTIFY_TO = Deno.env.get("LEADS_NOTIFY_TO") ?? "info@modulimo.com";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -68,6 +69,10 @@ Deno.serve(async (req) => {
   const message = String(body.message ?? "").trim().slice(0, 4000);
   const locale = String(body.locale ?? "").trim().slice(0, 16) || null;
   const sourcePage = String(body.source_page ?? "").trim().slice(0, 200) || null;
+  // Sujet du lead, pour l'objet du courriel. Liste fermée : le champ vient
+  // du navigateur et ne doit pas pouvoir écrire n'importe quoi dans l'objet.
+  const SUJETS = ["Pointe Est", "CoHabitat"];
+  const sujet = SUJETS.includes(body.subject) ? body.subject : "Pointe Est";
 
   if (!firstName || !lastName) return json({ error: "missing_name" }, 400);
   if (!EMAIL_RE.test(email)) return json({ error: "invalid_email" }, 400);
@@ -125,9 +130,9 @@ Deno.serve(async (req) => {
           from: RESEND_FROM,
           to: [NOTIFY_TO],
           reply_to: email,
-          subject: `Nouveau lead Pointe Est — ${firstName} ${lastName}`,
+          subject: `Nouveau lead ${sujet} — ${firstName} ${lastName}`,
           html: [
-            `<h2>Nouveau lead — Pointe Est</h2>`,
+            `<h2>Nouveau lead — ${sujet}</h2>`,
             `<p><strong>Nom :</strong> ${esc(firstName)} ${esc(lastName)}</p>`,
             `<p><strong>Courriel :</strong> ${esc(email)}</p>`,
             message ? `<p><strong>Message :</strong><br>${esc(message).replace(/\n/g, "<br>")}</p>` : "",
