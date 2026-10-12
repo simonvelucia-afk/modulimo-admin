@@ -1545,7 +1545,10 @@ async function generateInvoice(contractId) {
     // Ligne frais mensuel + lignes services
     const lines = [];
     if(monthlyFee > 0) {
-      const label = c.plan === 'network' ? 'Forfait Réseau' : (c.plan === 'owner' ? 'Licence propriétaire' : 'Forfait Local');
+      // Tout forfait propriétaire (proprietaire, owner, owner_immeuble,
+      // owner_reseau) est
+      // une licence propriétaire sur la facture.
+      const label = c.plan === 'network' ? 'Forfait Réseau' : (String(c.plan || '').startsWith('owner') || c.plan === 'proprietaire' ? 'Licence propriétaire' : 'Forfait Local');
       lines.push({
         category: 'monthly_fee',
         description: label + ' — ' + ps + ' → ' + pe,
@@ -1982,7 +1985,7 @@ async function loadContracts() {
 
   const statusColors = { active: 'badge-green', pending: 'badge-yellow', terminated: 'badge-red', suspended: 'badge-gray' };
   const statusLabels = { active: 'Actif', pending: 'En attente', terminated: 'Résilié', suspended: 'Suspendu' };
-  const planLabels   = { local: '🏠 Local', network: '🔗 Réseau', owner: '🏢 Propriétaire', starter: 'Starter', pro: 'Pro', enterprise: 'Enterprise' };
+  const planLabels   = { local: '🏠 Local', network: '🔗 Réseau', owner: '🏢 Propriétaire', owner_immeuble: '🏢 Immeuble', owner_reseau: '🏢 Réseau d’immeubles', starter: 'Starter', pro: 'Pro', enterprise: 'Enterprise' };
 
   // Grouper par immeuble (owner)
   const ownerContracts  = data.filter(c => c.type === 'owner');
@@ -2536,7 +2539,7 @@ async function ccmLoadContracts(clientId, clientName, clientType) {
 
   const statusColors = { active:'badge-green', pending:'badge-yellow', terminated:'badge-red', suspended:'badge-gray' };
   const statusLabels = { active:'Actif', pending:'En attente', terminated:'Résilié', suspended:'Suspendu' };
-  const planLabels   = { local:'🏠 Local', network:'🔗 Réseau', owner:'🏢 Propriétaire' };
+  const planLabels   = { local:'🏠 Local', network:'🔗 Réseau', owner:'🏢 Propriétaire', owner_immeuble:'🏢 Immeuble', owner_reseau:'🏢 Réseau d’immeubles' };
 
   el.innerHTML = `<table style="width:100%;border-collapse:collapse;">
     <thead><tr style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">
