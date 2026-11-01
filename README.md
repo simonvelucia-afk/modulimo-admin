@@ -15,3 +15,19 @@ Sur une base neuve, appliquer `sql/*.sql` dans l'ordre des numéros
 (`000_base_tables.sql` en premier : il contient le socle métier —
 clients, contrats, licences, forfaits, réseaux, machines Lunch — que les
 migrations suivantes présupposent).
+
+## Sécurité de la centrale
+
+La clé anon de la centrale est publique (dans `config.js`). Elle ne doit
+rien pouvoir lire ni modifier, hormis la signature d'un contrat par lien
+à jeton et le registre des immeubles (`sql/030_fermer_acces_public.sql`,
+test `sql/tests/acces_public_test.sql`).
+
+Tout compte connecté est traité en administrateur : **les inscriptions
+doivent rester fermées** sur le projet Supabase de la centrale
+(Authentication → Sign In / Providers → « Allow new users to sign up »
+désactivé). Les comptes se créent à la main, depuis le tableau de bord
+Supabase.
+
+Ne pas ajouter de politique à la main dans l'interface Supabase : passer
+par une migration de `sql/`, pour qu'elle se relise et se teste.
