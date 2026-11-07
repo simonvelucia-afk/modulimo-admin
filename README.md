@@ -16,6 +16,17 @@ Sur une base neuve, appliquer `sql/*.sql` dans l'ordre des numéros
 clients, contrats, licences, forfaits, réseaux, machines Lunch — que les
 migrations suivantes présupposent).
 
+La Machine Lunch ne se gère plus ici : elle est installée dans un immeuble et vit
+dans sa base CoHabitat (machines, cases, menus, achats — migration 037 de
+CoHabitat, onglet Admin → Paramètres). Les tables `lunch_*` de la centrale ne
+gardent que l'historique des anciens achats, toujours inclus dans l'export des
+données d'un client.
+
+Les Machines Lunch **louées par Modulimo** se suivent dans la page **Parc Lunch**
+(`sql/036_parc_lunch.sql`) : numéro de série, immeuble, état. Le loyer par machine se
+règle sur cette page ; l'abonnement « Location Machine Lunch » du propriétaire suit le
+nombre de ses machines en service, et la facture mensuelle en fait une ligne.
+
 ## Sécurité de la centrale
 
 La clé anon de la centrale est publique (dans `config.js`). Elle ne doit
