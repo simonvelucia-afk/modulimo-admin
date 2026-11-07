@@ -51,8 +51,8 @@ UPDATE plans SET code = 'network'
 -- « Petit immeuble » : le forfait historique 'owner', mis à jour.
 UPDATE plans
    SET name          = 'Petit immeuble',
-       price_monthly = 49,
-       max_units     = 20,
+       price_monthly = 43,   -- prix en production (voir 032)
+       max_units     = 12,
        sort_order    = 1,
        featured      = FALSE,
        active        = TRUE

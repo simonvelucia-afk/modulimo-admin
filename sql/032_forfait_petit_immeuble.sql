@@ -12,17 +12,18 @@
 -- Rien n'est supprimé : « Immeuble » (owner_immeuble) et « Réseau
 -- d'immeubles » (owner_reseau) sont seulement désactivés, avec leurs
 -- fonctions, et se réactivent dans l'onglet Forfaits le moment venu.
--- Le prix du forfait « Petit immeuble » n'est pas modifié ici.
+-- Prix : 43 $ / mois, celui saisi en production.
 -- ============================================================
 
 BEGIN;
 
 UPDATE plans
-   SET name       = 'Petit immeuble',
-       max_units  = 12,
-       sort_order = 1,
-       featured   = TRUE,
-       active     = TRUE
+   SET name          = 'Petit immeuble',
+       price_monthly = 43,
+       max_units     = 12,
+       sort_order    = 1,
+       featured      = TRUE,
+       active        = TRUE
  WHERE code IN ('proprietaire', 'owner');
 
 UPDATE plans
