@@ -5,11 +5,11 @@
 -- Idempotent : chaque passage remet les fonctions affichées dans
 -- l'état ci-dessous.
 --
--- Aucun module n'est imposé : le propriétaire active ceux qu'il veut
--- pour son immeuble, et chaque locataire n'utilise que ceux qui lui
--- servent. La liste affichée sous chaque forfait le dit en premier,
--- puis sépare les modules au choix de ce qui est toujours inclus.
--- Les prix ne changent pas.
+-- Le propriétaire paie la base et les modules qu'il active, chacun à
+-- son prix par chambre et par mois (catalogue : 034). Ses locataires
+-- ont les modules activés et paient à l'usage. Le multi-site est le
+-- seul module payé par le locataire, et il est facturé par Modulimo.
+-- Les prix affichés ici reprennent ceux du catalogue de 034.
 -- ============================================================
 
 BEGIN;
@@ -22,20 +22,19 @@ INSERT INTO plan_features (plan_id, label, included, sort_order)
 SELECT p.id, f.label, TRUE, f.ordre
   FROM plans p
  CROSS JOIN (VALUES
-   (1,  'Modules au choix, activables un à un : pour l''immeuble comme pour chaque locataire'),
-   (2,  'Module Réservation d''espaces communs'),
-   (3,  'Module Mobilité partagée : auto-partage, vélomobiles, covoiturage'),
-   (4,  'Module Serre et poulailler'),
-   (5,  'Module Babillard, billets de service et Lab d''idées'),
-   (6,  'Module Machine Lunch (kiosque)'),
-   (7,  'Toujours inclus : gestion des locataires'),
-   (8,  'Toujours inclus : solde virtuel et transactions'),
-   (9,  'Toujours inclus : conformité Loi 25'),
-   (10, 'Toujours inclus : support par courriel')
+   (1, 'Prix par chambre et par mois, module par module : 43 $ pour 12 chambres avec tous les modules'),
+   (2, 'Base incluse (1,00 $) : espaces communs, babillard, gestion des locataires, solde virtuel, Loi 25, support'),
+   (3, 'Mobilité partagée, en option (1,00 $) : véhicules, vélomobiles, covoiturage'),
+   (4, 'Énergie et confort, en option (0,60 $) : état de l''immeuble, eau chaude, alertes'),
+   (5, 'Serre, en option (0,50 $) : zones de culture louables au mois'),
+   (6, 'Machine Lunch, en option (0,50 $) : kiosque et commandes'),
+   (7, 'Vos locataires ont les modules activés et paient à l''usage')
  ) AS f(ordre, label)
  WHERE p.code IN ('owner', 'proprietaire');
 
 -- « Locataire multi-site »
+UPDATE plans SET name = 'Multi-site (locataire)' WHERE code IN ('network', 'resident_network');
+
 DELETE FROM plan_features
  WHERE plan_id IN (SELECT id FROM plans WHERE code IN ('network', 'resident_network'));
 
@@ -43,9 +42,9 @@ INSERT INTO plan_features (plan_id, label, included, sort_order)
 SELECT p.id, f.label, TRUE, f.ordre
   FROM plans p
  CROSS JOIN (VALUES
-   (1, 'Gratuit dans votre propre immeuble : ce forfait ne sert qu''au multi-site'),
-   (2, 'Réservations dans les autres immeubles du réseau'),
-   (3, 'Modules au choix : vous n''utilisez que ceux qui vous servent')
+   (1, 'Réservations dans les autres immeubles du réseau'),
+   (2, 'Facturé au locataire par Modulimo, pas par l''immeuble'),
+   (3, 'Dans son immeuble, le locataire ne paie que ce qu''il utilise')
  ) AS f(ordre, label)
  WHERE p.code IN ('network', 'resident_network');
 

@@ -737,17 +737,14 @@
       <div class="form-group"><label>Unités max</label><input id="lic-units" type="number" value="20"></div>
       <div class="form-group"><label>Expiration</label><input id="lic-expires" type="date"></div>
       <div class="form-group">
-        <label>Modules autorisés</label>
-        <div style="margin-top:8px">
-          <div class="module-toggle">
-            <span style="font-size:13px">🚗 Auto-partage (covoiturage)</span>
-            <label class="toggle-sw"><input type="checkbox" id="mod-trips" checked><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
-          </div>
-          <div class="module-toggle" style="border:none">
-            <span style="font-size:13px">🍱 Machine Lunch</span>
-            <label class="toggle-sw"><input type="checkbox" id="mod-lunch" checked><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
-          </div>
-        </div>
+        <label>Nombre de chambres facturées</label>
+        <input id="lic-chambres" type="number" min="1" placeholder="ex. 12">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Chaque module est facturé par chambre et par mois. Vide : modules ouverts sans abonnement facturé.</div>
+      </div>
+      <div class="form-group">
+        <label>Modules</label>
+        <div id="lic-modules" style="margin-top:8px"></div>
+        <div id="lic-modules-total" style="font-size:12px;color:var(--text2);margin-top:6px"></div>
       </div>
       <div class="form-group"><label>Active</label>
         <label class="toggle-sw"><input type="checkbox" id="lic-active" checked><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
@@ -1521,12 +1518,38 @@ async function generateInvoice(contractId) {
       .eq('id', c.client_id).single();
     if(!cli) throw new Error('Client introuvable');
 
-    // Frais mensuel : override contrat > défaut plan
-    let monthlyFee = Number(c.monthly_amount) || 0;
+    // Frais mensuel : abonnements par module (sql/034) > montant du
+    // contrat > prix du forfait.
+    const lines = [];
+    let monthlyFee = 0;
+    let partModulimo = 0; // modules encaissés par Modulimo sur une facture de locataire
+    try {
+      const { data: abos } = await sb.from('abonnements_modules')
+        .select('module_code, quantite, prix_unitaire, modules(nom, calcul, encaisse_par)')
+        .eq('client_id', c.client_id).eq('statut', 'actif');
+      (abos || []).forEach(a => {
+        const total = Math.round(Number(a.quantite) * Number(a.prix_unitaire) * 100) / 100;
+        if(total <= 0) return;
+        monthlyFee += total;
+        if(c.type === 'resident' && a.modules?.encaisse_par === 'modulimo') partModulimo += total;
+        const unite = a.modules?.calcul === 'par_chambre' ? ' (' + a.quantite + ' chambres × ' + _fmtMoney(a.prix_unitaire) + ')' : '';
+        lines.push({
+          category: 'module',
+          description: 'Module ' + (a.modules?.nom || a.module_code) + unite + ' — ' + ps + ' → ' + pe,
+          quantity: a.quantite, unit_amount: Number(a.prix_unitaire), total_amount: total,
+          transaction_date: null
+        });
+      });
+      monthlyFee = Math.round(monthlyFee * 100) / 100;
+    } catch(e) { console.warn('[invoice] abonnements_modules:', e.message); }
+    if(!monthlyFee) monthlyFee = Number(c.monthly_amount) || 0;
     if(!monthlyFee && c.plan) {
       const { data: plan } = await sb.from('plans').select('price_monthly').eq('code', c.plan).maybeSingle();
       if(plan?.price_monthly) monthlyFee = Number(plan.price_monthly) || 0;
     }
+    // Ancien forfait réseau d'un locataire, sans abonnement : c'est le
+    // multi-site, encaissé par Modulimo.
+    if(!lines.length && c.type === 'resident' && c.plan === 'network') partModulimo = monthlyFee;
 
     const billingMode = c.billing_mode || 'owner_collects';
 
@@ -1542,9 +1565,8 @@ async function generateInvoice(contractId) {
       }
     }
 
-    // Ligne frais mensuel + lignes services
-    const lines = [];
-    if(monthlyFee > 0) {
+    // Ligne frais mensuel (sans abonnement par module) + lignes services
+    if(monthlyFee > 0 && !lines.length) {
       // Tout forfait propriétaire (proprietaire, owner, owner_immeuble,
       // owner_reseau) est
       // une licence propriétaire sur la facture.
@@ -1572,8 +1594,11 @@ async function generateInvoice(contractId) {
 
     const total       = Math.round((monthlyFee + servicesSubtotal) * 100) / 100;
     const commissionP = Number(MODULIMO_COMMISSION_PCT) || 0;
-    const commission  = Math.round(total * commissionP) / 100;
-    const netOwner    = Math.round((total - commission) * 100) / 100;
+    // Ce que Modulimo encaisse pour son compte (multi-site d'un locataire)
+    // ne passe ni par la commission ni par la part du propriétaire.
+    const assiette    = Math.round((total - partModulimo) * 100) / 100;
+    const commission  = Math.round(assiette * commissionP) / 100;
+    const netOwner    = Math.round((assiette - commission) * 100) / 100;
 
     if(status) status.textContent = 'Écriture de la facture…';
     const { data: inv, error: ie } = await sb.from('invoices').insert({
@@ -3651,7 +3676,9 @@ async function loadLicences() {
     const mods = l.modules || {};
     const modBadges = [
       mods.trips ? '<span class="badge badge-gray">🚗</span>' : '',
-      mods.lunch ? '<span class="badge badge-gray">🍱</span>' : ''
+      mods.lunch ? '<span class="badge badge-gray">🍱</span>' : '',
+      mods.serre ? '<span class="badge badge-gray">🌱</span>' : '',
+      mods.energie ? '<span class="badge badge-gray">⚡</span>' : ''
     ].filter(Boolean).join(' ');
     const expired = l.expires_at && new Date(l.expires_at) < new Date();
     return `<tr>
@@ -3676,8 +3703,9 @@ async function openLicenceModal() {
   document.getElementById('lic-plan').value = 'starter';
   document.getElementById('lic-units').value = '20';
   document.getElementById('lic-expires').value = '';
-  document.getElementById('mod-trips').checked = true;
-  document.getElementById('mod-lunch').checked = true;
+  document.getElementById('lic-chambres').value = '';
+  await chargerCatalogueModules();
+  rendreModulesLicence(new Set(['base', 'mobilite', 'lunch']));
   document.getElementById('lic-active').checked = true;
   document.getElementById('lic-modal-title').textContent = 'Nouvelle licence';
   openModal('modal-licence');
@@ -3699,12 +3727,106 @@ async function editLicence(l) {
   document.getElementById('lic-plan').value    = l.plan;
   document.getElementById('lic-units').value   = l.max_units;
   document.getElementById('lic-expires').value = l.expires_at ? l.expires_at.slice(0,10) : '';
-  document.getElementById('mod-trips').checked = !!(l.modules?.trips);
-  document.getElementById('mod-lunch').checked = !!(l.modules?.lunch);
+  await chargerCatalogueModules();
+  const abos = await abonnementsEnCours(l.client_id);
+  const coches = new Set(['base']);
+  if (abos.length) abos.forEach(a => coches.add(a.module_code));
+  else modulesProprietaire().forEach(m => { if (m.cle_licence && l.modules?.[m.cle_licence]) coches.add(m.code); });
+  const aboBase = abos.find(a => a.module_code === 'base') || abos[0];
+  document.getElementById('lic-chambres').value = aboBase ? aboBase.quantite : '';
+  rendreModulesLicence(coches);
   document.getElementById('lic-active').checked = !!l.active;
   document.getElementById('lic-notes').value   = l.notes || '';
   document.getElementById('lic-modal-title').textContent = 'Modifier licence';
   openModal('modal-licence');
+}
+
+// ── MODULES : catalogue (sql/034) et abonnements par client ────────────────
+// Chaque module a son prix par chambre et par mois. Cocher un module dans la
+// fiche licence crée son abonnement (prix figé à la souscription) ; le
+// décocher le termine. La licence (licences.modules, lue par CoHabitat) suit
+// les abonnements par déclencheur. Paiement : 'manuel' tant qu'aucun
+// fournisseur électronique n'est branché — la facture mensuelle fait une
+// ligne par module.
+let modulesCatalogue = [];
+// Repli si la migration 034 n'est pas encore passée : les interrupteurs
+// seuls, sans prix ni abonnement.
+const MODULES_REPLI = [
+  { code: 'base',     nom: 'Base',               payeur: 'proprietaire', obligatoire: true,  cle_licence: null },
+  { code: 'mobilite', nom: 'Mobilité partagée',  payeur: 'proprietaire', obligatoire: false, cle_licence: 'trips' },
+  { code: 'energie',  nom: 'Énergie et confort', payeur: 'proprietaire', obligatoire: false, cle_licence: 'energie' },
+  { code: 'serre',    nom: 'Serre',              payeur: 'proprietaire', obligatoire: false, cle_licence: 'serre' },
+  { code: 'lunch',    nom: 'Machine Lunch',      payeur: 'proprietaire', obligatoire: false, cle_licence: 'lunch' }
+];
+let modulesCatalogueReel = false;
+
+async function chargerCatalogueModules() {
+  if (modulesCatalogueReel) return;
+  const { data, error } = await sb.from('modules').select('*').eq('active', true).order('sort_order');
+  if (!error && data && data.length) { modulesCatalogue = data; modulesCatalogueReel = true; }
+  else modulesCatalogue = MODULES_REPLI;
+}
+function modulesProprietaire() {
+  return modulesCatalogue.filter(m => m.payeur === 'proprietaire');
+}
+async function abonnementsEnCours(clientId) {
+  if (!modulesCatalogueReel || !clientId) return [];
+  const { data } = await sb.from('abonnements_modules').select('*')
+    .eq('client_id', clientId).neq('statut', 'termine');
+  return data || [];
+}
+function rendreModulesLicence(coches) {
+  const mods = modulesProprietaire();
+  document.getElementById('lic-modules').innerHTML = mods.map((m, i) => {
+    const prix = m.prix_mensuel != null ? ' — ' + Number(m.prix_mensuel).toFixed(2) + ' $ / chambre' : '';
+    return `<div class="module-toggle"${i === mods.length - 1 ? ' style="border:none"' : ''}>
+      <span style="font-size:13px">${m.nom}${m.obligatoire ? ' (incluse)' : ''}<span style="color:var(--text3)">${prix}</span></span>
+      <label class="toggle-sw"><input type="checkbox" id="lic-mod-${m.code}" ${coches.has(m.code) || m.obligatoire ? 'checked' : ''} ${m.obligatoire ? 'disabled' : ''} onchange="totalModulesLicence()"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+    </div>`;
+  }).join('');
+  document.getElementById('lic-chambres').oninput = totalModulesLicence;
+  totalModulesLicence();
+}
+function modulesCoches() {
+  return modulesProprietaire().filter(m => document.getElementById('lic-mod-' + m.code)?.checked);
+}
+function totalModulesLicence() {
+  const el = document.getElementById('lic-modules-total');
+  if (!el) return;
+  const n = parseInt(document.getElementById('lic-chambres').value) || 0;
+  if (!modulesCatalogueReel || !n) { el.textContent = ''; return; }
+  const parChambre = modulesCoches().reduce((t, m) => t + Number(m.prix_mensuel || 0), 0);
+  el.textContent = 'Total : ' + parChambre.toFixed(2) + ' $ × ' + n + ' chambres = ' + (parChambre * n).toFixed(2) + ' $ / mois';
+}
+function modulesLicenceCoches() {
+  const out = {};
+  modulesProprietaire().forEach(m => {
+    if (m.cle_licence) out[m.cle_licence] = !!document.getElementById('lic-mod-' + m.code)?.checked;
+  });
+  return out;
+}
+async function enregistrerAbonnementsLicence(clientId) {
+  if (!modulesCatalogueReel || !clientId) return {};
+  const chambres = parseInt(document.getElementById('lic-chambres').value) || 0;
+  if (!chambres) return { sansChambres: true };
+  const enCours = await abonnementsEnCours(clientId);
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  for (const m of modulesProprietaire()) {
+    const coche = !!document.getElementById('lic-mod-' + m.code)?.checked;
+    const abo = enCours.find(a => a.module_code === m.code);
+    const quantite = m.calcul === 'forfait' ? 1 : chambres;
+    let r = null;
+    if (coche && abo) {
+      if (abo.quantite !== quantite || abo.statut !== 'actif')
+        r = await sb.from('abonnements_modules').update({ quantite, statut: 'actif', updated_at: new Date().toISOString() }).eq('id', abo.id);
+    } else if (coche) {
+      r = await sb.from('abonnements_modules').insert({ client_id: clientId, module_code: m.code, quantite, prix_unitaire: m.prix_mensuel });
+    } else if (abo) {
+      r = await sb.from('abonnements_modules').update({ statut: 'termine', fin: aujourdhui, updated_at: new Date().toISOString() }).eq('id', abo.id);
+    }
+    if (r?.error) return { erreur: r.error.message };
+  }
+  return {};
 }
 
 async function populateClientSelect() {
@@ -3726,7 +3848,7 @@ async function saveLicence() {
     plan:         document.getElementById('lic-plan').value,
     max_units:    parseInt(document.getElementById('lic-units').value) || 20,
     expires_at:   document.getElementById('lic-expires').value || null,
-    modules:      { trips: document.getElementById('mod-trips').checked, lunch: document.getElementById('mod-lunch').checked },
+    modules:      modulesLicenceCoches(),
     active:       document.getElementById('lic-active').checked,
     notes:        document.getElementById('lic-notes').value.trim(),
     updated_at:   new Date().toISOString()
@@ -3736,7 +3858,9 @@ async function saveLicence() {
     ? await sb.from('licences').update(payload).eq('id', id)
     : await sb.from('licences').insert(payload);
   if (error) { toast('Erreur: ' + error.message, 'error'); return; }
-  toast(id ? 'Licence modifiée' : 'Licence créée', 'success');
+  const abo = await enregistrerAbonnementsLicence(payload.client_id);
+  if (abo.erreur) toast('Licence enregistrée, abonnements non mis à jour : ' + abo.erreur, 'error');
+  else toast((id ? 'Licence modifiée' : 'Licence créée') + (abo.sansChambres ? ' — aucun module facturé (nombre de chambres vide)' : ''), 'success');
   closeModal('modal-licence');
   loadLicences();
 }
