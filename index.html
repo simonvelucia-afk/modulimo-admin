@@ -1845,8 +1845,8 @@ async function loadPendingRequests() {
         </td>
         <td>
           <select id="pending-plan-${p.id}" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;">
-            <option value="local">🏠 Local</option>
-            <option value="network">🔗 Réseau</option>
+            <option value="local">🏠 Son immeuble</option>
+            <option value="network">🔗 Multi-site</option>
           </select>
         </td>
         <td style="font-size:11px;color:var(--text3)">${p.created_at ? new Date(p.created_at).toLocaleDateString('fr-CA') : '—'}</td>
@@ -1877,7 +1877,7 @@ async function approveResident(clientId, cohabitatUserId) {
   if(error) { toast('Erreur Central: ' + error.message, 'error'); return; }
 
   // 2. Créer un contrat
-  await sb.from('contracts').insert({
+  const { data: nouveau } = await sb.from('contracts').insert({
     client_id: clientId,
     owner_client_id: ownerId,
     type: 'resident',
@@ -1885,7 +1885,11 @@ async function approveResident(clientId, cohabitatUserId) {
     starts_at: new Date().toISOString().slice(0,10),
     status: 'active',
     created_by: 'modulimo_admin'
-  });
+  }).select('id').maybeSingle();
+  if(plan === 'network') {
+    const r = await syncAbonnementMultisite(clientId, nouveau?.id || null, true);
+    if(r.erreur) toast('Abonnement multi-site non créé : ' + r.erreur, 'error');
+  }
 
   // 3. Activer le profil dans CoHabitat Supabase de l'immeuble
   if(cohabitatUserId) {
@@ -2316,13 +2320,105 @@ async function editContract(id) {
       document.getElementById('ec-commission-pct')?.addEventListener('input', updatePreview);
     }, 50);
   } else {
-    // Contrat résident — date de fin seulement
-    const ends = prompt('Date de fin (AAAA-MM-JJ, vide = indéterminé) :', c.ends_at || '');
-    if(ends === null) return;
-    await sb.from('contracts').update({ ends_at: ends || null }).eq('id', id);
-    toast('Contrat mis à jour', 'success');
-    loadContracts();
+    // Contrat résident : multi-site et date de fin
+    const prixMs = await prixMultisite();
+    let overlay = document.getElementById('contract-quick-modal');
+    if(!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'contract-quick-modal';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;';
+      overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;max-width:440px;width:90%;margin:40px auto;">
+        <h3 style="margin:0 0 16px;color:var(--text)">Modifier contrat résident</h3>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="module-toggle" style="border:1px solid var(--border);border-radius:8px;padding:12px;">
+            <span style="font-size:13px">🔗 Multi-site : réserver dans les autres immeubles<br><span style="color:var(--text3);font-size:12px">${prixMs != null ? prixMs.toFixed(2) + ' $ / mois, ' : ''}facturé par Modulimo, pas par l'immeuble</span></span>
+            <label class="toggle-sw"><input type="checkbox" id="ec-multisite" ${c.plan === 'network' ? 'checked' : ''}><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+          </div>
+          <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Date fin</label>
+            <input type="date" id="ec-end" value="${c.ends_at || ''}" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;box-sizing:border-box;"></div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+            <button class="btn btn-secondary" onclick="document.getElementById('contract-quick-modal').remove()">Annuler</button>
+            <button class="btn btn-primary" onclick="saveEditResidentContract('${id}')">Enregistrer</button>
+          </div>
+        </div>
+      </div>`;
+    overlay.style.display = 'flex';
   }
+}
+
+async function saveEditResidentContract(id) {
+  const end = document.getElementById('ec-end')?.value || null;
+  const multisite = !!document.getElementById('ec-multisite')?.checked;
+  const { error } = await sb.from('contracts').update({ ends_at: end }).eq('id', id);
+  if(error) { toast('Erreur: ' + error.message, 'error'); return; }
+  const r = await appliquerMultisite(id, multisite);
+  document.getElementById('contract-quick-modal')?.remove();
+  if(r.erreur) toast('Contrat enregistré, multi-site non mis à jour : ' + r.erreur, 'error');
+  else toast('Contrat mis à jour' + (multisite ? ' — multi-site actif' : ''), 'success');
+  loadContracts();
+}
+
+// ── MULTI-SITE DU LOCATAIRE ────────────────────────────────────────────────
+// Le multi-site est le seul module que paie le locataire, et c'est Modulimo
+// qui l'encaisse (catalogue : sql/034). Il reste porté par le forfait
+// 'network' (contrat, fiche client, profil CoHabitat), qui ouvre l'accès aux
+// autres immeubles ; l'abonnement au module 'multisite' en fait la ligne de
+// facture. Sans la migration 034, seul le forfait change.
+async function prixMultisite() {
+  const { data, error } = await sb.from('modules').select('prix_mensuel').eq('code', 'multisite').maybeSingle();
+  return error || !data ? null : Number(data.prix_mensuel);
+}
+
+async function syncAbonnementMultisite(clientId, contractId, actif) {
+  const prix = await prixMultisite();
+  if(prix == null) return {}; // catalogue absent : rien à abonner
+  const { data: abos, error: le } = await sb.from('abonnements_modules').select('id, statut')
+    .eq('client_id', clientId).eq('module_code', 'multisite').neq('statut', 'termine');
+  if(le) return { erreur: le.message };
+  const abo = (abos || [])[0];
+  let r = null;
+  if(actif && !abo) {
+    r = await sb.from('abonnements_modules').insert({ client_id: clientId, contract_id: contractId, module_code: 'multisite', quantite: 1, prix_unitaire: prix });
+  } else if(actif && abo.statut !== 'actif') {
+    r = await sb.from('abonnements_modules').update({ statut: 'actif', updated_at: new Date().toISOString() }).eq('id', abo.id);
+  } else if(!actif && abo) {
+    r = await sb.from('abonnements_modules').update({ statut: 'termine', fin: new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() }).eq('id', abo.id);
+  }
+  return r?.error ? { erreur: r.error.message } : {};
+}
+
+async function appliquerMultisite(contractId, actif) {
+  const { data: c, error: ce } = await sb.from('contracts').select('id, client_id, owner_client_id, plan').eq('id', contractId).single();
+  if(ce || !c) return { erreur: ce?.message || 'Contrat introuvable' };
+  const plan = actif ? 'network' : 'local';
+  if(c.plan !== plan) {
+    const { error } = await sb.from('contracts').update({ plan }).eq('id', contractId);
+    if(error) return { erreur: error.message };
+  }
+  await sb.from('clients').update({ client_type: plan, updated_at: new Date().toISOString() }).eq('id', c.client_id);
+  const r = await syncAbonnementMultisite(c.client_id, contractId, actif);
+  if(r.erreur) return r;
+
+  // Profil CoHabitat de l'immeuble : c'est lui qui ouvre l'accès aux autres
+  // immeubles. Non bloquant, comme à l'approbation.
+  try {
+    const { data: cli } = await sb.from('clients').select('cohabitat_user_id').eq('id', c.client_id).single();
+    const { data: lics } = await sb.from('licences').select('supabase_url, anon_key').eq('client_id', c.owner_client_id).eq('active', true).limit(1);
+    const lic = lics?.[0];
+    if(cli?.cohabitat_user_id && lic?.supabase_url) {
+      const key = lic.anon_key || CENTRAL_KEY;
+      await fetch(lic.supabase_url + '/rest/v1/profiles?id=eq.' + cli.cohabitat_user_id, {
+        method: 'PATCH',
+        headers: { apikey: key, Authorization: 'Bearer ' + key, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ resident_plan: plan, status_changed_at: new Date().toISOString() })
+      });
+    }
+  } catch(e) { console.warn('[multisite] profil CoHabitat (non bloquant):', e.message); }
+  return {};
 }
 
 async function saveEditContract(id) {
@@ -2365,8 +2461,8 @@ async function openContractModal() {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Forfait</label>
             <select id="nc-plan" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;">
-              <option value="local">🏠 Local</option>
-              <option value="network">🔗 Réseau</option>
+              <option value="local">🏠 Son immeuble seulement</option>
+              <option value="network">🔗 Multi-site (facturé par Modulimo)</option>
             </select></div>
           <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);display:block;margin-bottom:6px;">Statut</label>
             <select id="nc-status" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;">
@@ -2424,6 +2520,12 @@ async function saveNewContract() {
     created_by: 'modulimo_admin'
   });
   if(error) { toast('Erreur: ' + error.message, 'error'); return; }
+  if(plan === 'network') {
+    const { data: nc } = await sb.from('contracts').select('id').eq('client_id', clientId)
+      .eq('type', 'resident').order('created_at', { ascending: false }).limit(1);
+    const r = await syncAbonnementMultisite(clientId, nc?.[0]?.id || null, true);
+    if(r.erreur) toast('Abonnement multi-site non créé : ' + r.erreur, 'error');
+  }
 
   document.getElementById('contract-quick-modal')?.remove();
   toast('Contrat créé', 'success');
