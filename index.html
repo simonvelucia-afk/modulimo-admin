@@ -150,6 +150,7 @@
       <div class="nav-item" onclick="nav('licences')">🗝 Licences</div>
       <div class="nav-item" onclick="nav('networks')">🔗 Réseaux</div>
       <div class="nav-item" onclick="nav('plans')">📦 Forfaits</div>
+      <div class="nav-item" onclick="nav('parc')">🍱 Parc Lunch</div>
     </div>
     <div class="content">
 
@@ -362,6 +363,67 @@
         <div id="plans-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;"></div>
       </div>
 
+      <!-- PARC LUNCH : machines louées par Modulimo (sql/036) -->
+      <div id="page-parc" class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div class="page-title" style="margin:0">Parc Lunch</div>
+          <button class="btn btn-primary btn-sm" onclick="openMachineModal()">+ Nouvelle machine</button>
+        </div>
+        <div style="background:rgba(200,169,110,.08);border:1px solid rgba(200,169,110,.25);border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:var(--text2);">
+          Les Machines Lunch louées par Modulimo. Chacune est reconnue dans son immeuble par son <strong>numéro de série</strong> ;
+          cases, menus et ventes se gèrent dans CoHabitat (Admin → Paramètres). Le propriétaire paie le loyer de chaque machine
+          <strong>en service</strong> : sa facture suit le parc tout seul.
+        </div>
+        <div class="card" style="padding:16px 18px;margin-bottom:20px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;">
+          <div class="form-group" style="margin:0">
+            <label>Loyer mensuel par machine ($)</label>
+            <input id="parc-loyer" type="number" min="0" step="0.01" style="width:140px">
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);margin-bottom:8px;">
+            <input type="checkbox" id="parc-loyer-encours"> Appliquer aussi aux locations en cours
+          </label>
+          <button class="btn btn-secondary btn-sm" style="margin-bottom:4px" onclick="saveLoyerParc()">Enregistrer le loyer</button>
+          <div id="parc-loyer-info" style="font-size:12px;color:var(--text3);margin-bottom:8px;"></div>
+        </div>
+        <div class="stats-grid" id="parc-stats"></div>
+        <div class="card" style="padding:0">
+          <table>
+            <thead><tr><th>N° de série</th><th>Modèle</th><th>Immeuble</th><th>État</th><th>Installée le</th><th>Notes</th><th>Actions</th></tr></thead>
+            <tbody id="parc-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal Machine du parc Lunch -->
+<div class="modal-overlay" id="modal-machine">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="machine-modal-title">Nouvelle machine</span>
+      <button onclick="closeModal('modal-machine')" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="pm-id">
+      <div class="form-group"><label>Numéro de série</label><input id="pm-serie" placeholder="celui inscrit sur la machine"></div>
+      <div class="form-group"><label>Modèle</label><input id="pm-modele" placeholder="ex. LM-12"></div>
+      <div class="form-group"><label>Immeuble (propriétaire)</label><select id="pm-client"></select></div>
+      <div class="form-group"><label>État</label>
+        <select id="pm-statut">
+          <option value="en_stock">En stock</option>
+          <option value="en_service">En service (loyer facturé)</option>
+          <option value="entretien">En entretien</option>
+          <option value="retiree">Retirée</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Installée le</label><input id="pm-installee" type="date"></div>
+      <div class="form-group"><label>Notes</label><textarea id="pm-notes" rows="2"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-machine')">Annuler</button>
+      <button class="btn btn-primary" onclick="saveMachine()">Enregistrer</button>
     </div>
   </div>
 </div>
@@ -946,6 +1008,7 @@ function nav(page) {
   if (page === 'licences')  loadLicences();
   if (page === 'networks')  loadNetworks();
   if (page === 'plans')     loadPlans();
+  if (page === 'parc')      loadParc();
 }
 
 // DASHBOARD
@@ -1465,9 +1528,10 @@ async function generateInvoice(contractId) {
     if(!cli) throw new Error('Client introuvable');
 
     // Frais mensuel : abonnements par module (sql/034) > montant du
-    // contrat > prix du forfait.
-    const lines = [];
-    let monthlyFee = 0;
+    // contrat > prix du forfait. Le loyer des Machines Lunch (sql/036)
+    // s'ajoute toujours : il ne remplace pas le forfait.
+    const lines = [], lignesLoyer = [];
+    let monthlyFee = 0, loyer = 0;
     let partModulimo = 0; // modules encaissés par Modulimo sur une facture de locataire
     try {
       const { data: abos } = await sb.from('abonnements_modules')
@@ -1476,17 +1540,21 @@ async function generateInvoice(contractId) {
       (abos || []).forEach(a => {
         const total = Math.round(Number(a.quantite) * Number(a.prix_unitaire) * 100) / 100;
         if(total <= 0) return;
-        monthlyFee += total;
+        const estLoyer = a.module_code === 'lunch_location';
+        if(estLoyer) loyer += total; else monthlyFee += total;
         if(c.type === 'resident' && a.modules?.encaisse_par === 'modulimo') partModulimo += total;
-        const unite = a.modules?.calcul === 'par_chambre' ? ' (' + a.quantite + ' chambres × ' + _fmtMoney(a.prix_unitaire) + ')' : '';
-        lines.push({
+        const unite = a.modules?.calcul === 'par_chambre' ? ' (' + a.quantite + ' chambres × ' + _fmtMoney(a.prix_unitaire) + ')'
+          : a.module_code === 'lunch_location' ? ' (' + a.quantite + (a.quantite > 1 ? ' machines' : ' machine') + ' × ' + _fmtMoney(a.prix_unitaire) + ')'
+          : a.quantite > 1 ? ' (' + a.quantite + ' × ' + _fmtMoney(a.prix_unitaire) + ')' : '';
+        (estLoyer ? lignesLoyer : lines).push({
           category: 'module',
-          description: 'Module ' + (a.modules?.nom || a.module_code) + unite + ' — ' + ps + ' → ' + pe,
+          description: (estLoyer ? '' : 'Module ') + (a.modules?.nom || a.module_code) + unite + ' — ' + ps + ' → ' + pe,
           quantity: a.quantite, unit_amount: Number(a.prix_unitaire), total_amount: total,
           transaction_date: null
         });
       });
       monthlyFee = Math.round(monthlyFee * 100) / 100;
+      loyer = Math.round(loyer * 100) / 100;
     } catch(e) { console.warn('[invoice] abonnements_modules:', e.message); }
     if(!monthlyFee) monthlyFee = Number(c.monthly_amount) || 0;
     if(!monthlyFee && c.plan) {
@@ -1523,6 +1591,11 @@ async function generateInvoice(contractId) {
         quantity: 1, unit_amount: monthlyFee, total_amount: monthlyFee,
         transaction_date: null
       });
+    }
+    // Loyer des Machines Lunch : en plus du forfait ou des modules
+    if(lignesLoyer.length) {
+      lines.push(...lignesLoyer);
+      monthlyFee = Math.round((monthlyFee + loyer) * 100) / 100;
     }
     let servicesSubtotal = 0;
     tenantTx.forEach(t => {
@@ -3795,7 +3868,8 @@ async function chargerCatalogueModules() {
   else modulesCatalogue = MODULES_REPLI;
 }
 function modulesProprietaire() {
-  return modulesCatalogue.filter(m => m.payeur === 'proprietaire');
+  // La location des Machines Lunch ne se coche pas : elle suit le parc (page Parc Lunch).
+  return modulesCatalogue.filter(m => m.payeur === 'proprietaire' && m.code !== 'lunch_location');
 }
 async function abonnementsEnCours(clientId) {
   if (!modulesCatalogueReel || !clientId) return [];
@@ -4311,6 +4385,107 @@ function escapeHtmlStats(s) {
 // HELPERS
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+// ── PARC LUNCH (sql/036) ─────────────────────────────────────────────────
+// Les machines louées par Modulimo. L'abonnement « Location Machine Lunch » du
+// propriétaire suit le parc par déclencheur (nombre de machines en service) ;
+// la page ne règle que les machines et le loyer.
+const PARC_ETATS = { en_stock: 'En stock', en_service: 'En service', entretien: 'En entretien', retiree: 'Retirée' };
+const PARC_BADGES = { en_stock: 'badge-gray', en_service: 'badge-green', entretien: 'badge-gray', retiree: 'badge-red' };
+let parcCache = [], parcProprios = [];
+const _parcEsc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function loadParc() {
+  const tbody = document.getElementById('parc-tbody');
+  const [machines, proprios, module, locations] = await Promise.all([
+    sb.from('parc_lunch').select('*, clients(name)').order('numero_serie'),
+    sb.from('clients').select('id, name').eq('client_type', 'owner').order('name'),
+    sb.from('modules').select('prix_mensuel').eq('code', 'lunch_location').maybeSingle(),
+    sb.from('abonnements_modules').select('quantite, prix_unitaire').eq('module_code', 'lunch_location').eq('statut', 'actif'),
+  ]);
+  if (machines.error) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--accent3)">' +
+      _parcEsc(/parc_lunch/.test(machines.error.message) ? 'Exécuter la migration sql/036_parc_lunch.sql sur la centrale.' : machines.error.message) + '</td></tr>';
+    return;
+  }
+  parcCache = machines.data || [];
+  parcProprios = proprios.data || [];
+  const loyer = module.data ? Number(module.data.prix_mensuel) : 0;
+  document.getElementById('parc-loyer').value = loyer.toFixed(2);
+  const locs = locations.data || [];
+  const revenu = locs.reduce((t, l) => t + Number(l.quantite) * Number(l.prix_unitaire), 0);
+  document.getElementById('parc-loyer-info').textContent = loyer > 0 ? '' : 'Loyer à 0 $ : aucune location n\'est facturée.';
+  const nb = (st) => parcCache.filter((m) => m.statut === st).length;
+  document.getElementById('parc-stats').innerHTML = [
+    { num: parcCache.length, lbl: 'Machines' },
+    { num: nb('en_service'), lbl: 'En service' },
+    { num: nb('en_stock'), lbl: 'En stock' },
+    { num: nb('entretien'), lbl: 'En entretien' },
+    { num: _fmtMoney(revenu), lbl: 'Loyers / mois' },
+  ].map(s => `<div class="stat-card"><div class="stat-num">${s.num}</div><div class="stat-lbl">${s.lbl}</div></div>`).join('');
+  tbody.innerHTML = parcCache.map((m) => `<tr>
+      <td><code style="font-size:12px">${_parcEsc(m.numero_serie)}</code></td>
+      <td>${_parcEsc(m.modele || '—')}</td>
+      <td>${_parcEsc(m.clients?.name || '—')}</td>
+      <td><span class="badge ${PARC_BADGES[m.statut] || 'badge-gray'}">${PARC_ETATS[m.statut] || m.statut}</span></td>
+      <td style="color:var(--text3)">${m.installee_le ? new Date(m.installee_le + 'T12:00:00').toLocaleDateString('fr-CA') : '—'}</td>
+      <td style="color:var(--text3);max-width:240px">${_parcEsc(m.notes || '')}</td>
+      <td><div class="td-actions"><button class="btn btn-secondary btn-sm" onclick="editMachine('${m.id}')">Modifier</button></div></td>
+    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucune machine</td></tr>';
+}
+
+function remplirMachine(m) {
+  document.getElementById('pm-id').value = m?.id || '';
+  document.getElementById('pm-serie').value = m?.numero_serie || '';
+  document.getElementById('pm-modele').value = m?.modele || '';
+  document.getElementById('pm-client').innerHTML = '<option value="">— Aucun (en stock) —</option>' +
+    parcProprios.map((c) => `<option value="${c.id}">${_parcEsc(c.name)}</option>`).join('');
+  document.getElementById('pm-client').value = m?.client_id || '';
+  document.getElementById('pm-statut').value = m?.statut || 'en_stock';
+  document.getElementById('pm-installee').value = m?.installee_le || '';
+  document.getElementById('pm-notes').value = m?.notes || '';
+  document.getElementById('machine-modal-title').textContent = m ? 'Modifier la machine' : 'Nouvelle machine';
+  openModal('modal-machine');
+}
+function openMachineModal() { remplirMachine(null); }
+function editMachine(id) { remplirMachine(parcCache.find((m) => m.id === id)); }
+
+async function saveMachine() {
+  const id = document.getElementById('pm-id').value;
+  const payload = {
+    numero_serie: document.getElementById('pm-serie').value.trim(),
+    modele:       document.getElementById('pm-modele').value.trim() || null,
+    client_id:    document.getElementById('pm-client').value || null,
+    statut:       document.getElementById('pm-statut').value,
+    installee_le: document.getElementById('pm-installee').value || null,
+    notes:        document.getElementById('pm-notes').value.trim() || null,
+    updated_at:   new Date().toISOString(),
+  };
+  if (!payload.numero_serie) { toast('Numéro de série requis', 'error'); return; }
+  if (payload.statut === 'en_service' && !payload.client_id) { toast('Une machine en service doit être installée dans un immeuble', 'error'); return; }
+  if (payload.statut === 'en_service' && !payload.installee_le) payload.installee_le = new Date().toISOString().slice(0, 10);
+  const { error } = id ? await sb.from('parc_lunch').update(payload).eq('id', id) : await sb.from('parc_lunch').insert(payload);
+  if (error) { toast('Erreur : ' + (/duplicate|unique/i.test(error.message) ? 'ce numéro de série existe déjà' : error.message), 'error'); return; }
+  toast(id ? 'Machine modifiée' : 'Machine ajoutée', 'success');
+  closeModal('modal-machine');
+  loadParc();
+}
+
+async function saveLoyerParc() {
+  const loyer = Math.round((parseFloat(document.getElementById('parc-loyer').value) || 0) * 100) / 100;
+  if (loyer < 0) { toast('Loyer invalide', 'error'); return; }
+  const { error } = await sb.from('modules').update({ prix_mensuel: loyer, updated_at: new Date().toISOString() }).eq('code', 'lunch_location');
+  if (error) { toast('Erreur : ' + error.message, 'error'); return; }
+  // Le prix d'un abonnement est figé à la souscription : les locations en
+  // cours ne changent que si on le demande.
+  if (document.getElementById('parc-loyer-encours').checked) {
+    const r = await sb.from('abonnements_modules').update({ prix_unitaire: loyer, updated_at: new Date().toISOString() })
+      .eq('module_code', 'lunch_location').neq('statut', 'termine');
+    if (r.error) { toast('Loyer enregistré, locations en cours non modifiées : ' + r.error.message, 'error'); loadParc(); return; }
+  }
+  toast('Loyer enregistré' + (document.getElementById('parc-loyer-encours').checked ? ', locations en cours mises à jour' : ' (nouvelles locations)'), 'success');
+  loadParc();
+}
 
 function toast(msg, type = 'success') {
   const el = document.getElementById('toast');
