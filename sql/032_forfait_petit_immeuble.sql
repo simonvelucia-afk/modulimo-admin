@@ -21,7 +21,7 @@
 --                                         un contrat existant n'est plus
 --                                         facturé.
 --   network (« Résident Réseau », 19 $)  → reste affiché, renommé
---                                         « Locataire multi-site ».
+--                                         « Multi-site (locataire) ».
 -- ============================================================
 
 BEGIN;
@@ -57,7 +57,7 @@ UPDATE plans
  WHERE code IN ('resident_local', 'local');
 
 UPDATE plans
-   SET name       = 'Locataire multi-site',
+   SET name       = 'Multi-site (locataire)',
        sort_order = 2,
        featured   = FALSE,
        active     = TRUE
